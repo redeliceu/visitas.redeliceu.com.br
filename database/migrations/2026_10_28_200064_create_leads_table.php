@@ -23,6 +23,7 @@ return new class extends Migration {
 
             $table->string('responsavel')->nullable();
             $table->string('telefone')->nullable();
+            $table->string('telefone_secundario')->nullable();
             $table->string('email')->nullable();
             $table->string('aluno')->nullable();
 
@@ -58,8 +59,8 @@ return new class extends Migration {
 
             $table->dateTime('data_matricula')->nullable();
 
-            // Valor monetário em reais.
-            $table->decimal('desconto', 10, 2)->nullable();
+            // Valor monetário em %.
+            $table->integer('desconto')->nullable();
 
             // Parâmetros de rastreamento de campanhas.
             $table->string('utm_source')->nullable();
