@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AccountController;
+use App\Http\Controllers\Admin\LegacyLeadImportController;
 use App\Http\Controllers\Admin\UnidadeController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\AgendamentoController;
@@ -61,6 +62,9 @@ Route::middleware(['auth', 'active'])->group(function () {
         Route::post('/campanhas/{campanha}/metas', [CampanhaController::class, 'storeSellerGoal'])->name('campanhas.metas.store');
     });
     Route::middleware('role:master')->prefix('admin')->name('admin.')->group(function () {
+        Route::get('/legacy-import', [LegacyLeadImportController::class, 'index'])->name('legacy-import.index');
+        Route::post('/legacy-import', [LegacyLeadImportController::class, 'store'])->name('legacy-import.store');
+
         Route::get('/users', [UserController::class, 'index'])->name('users.index');
         Route::post('/users', [UserController::class, 'store'])->name('users.store');
         Route::put('/users/{user}', [UserController::class, 'update'])->name('users.update');

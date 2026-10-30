@@ -24,6 +24,13 @@
     color: #a52b39;
 }
 
+.visit-notice.warning {
+    border-color: #f0d9a8;
+    background: #fff9eb;
+    color: #76500b;
+    white-space: pre-line;
+}
+
 .es-class-detail-trigger {
     display: block;
     width: 100%;
