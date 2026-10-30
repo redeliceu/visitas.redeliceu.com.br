@@ -12,8 +12,11 @@ class LeadStatusSeeder extends Seeder
         $statuses = [
             'Novo',
             'Atendendo',
-            'Agendado',
             'Em Negociação',
+            'Agendado',
+            'Compareceu',
+            'Follow-up',
+            'Perdido',
             'Sem Interesse',
             'Não Responde',
             'Rematrícula',

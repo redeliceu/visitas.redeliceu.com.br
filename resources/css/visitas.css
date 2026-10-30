@@ -1,0 +1,364 @@
+.field-error {
+    color: #b42332;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.es-schedule-note {
+    grid-column: 1 / -1;
+    color: #58718d;
+}
+
+.visit-notice {
+    margin-bottom: 16px;
+    padding: 12px 16px;
+    border: 1px solid #d5e8dc;
+    border-radius: 9px;
+    background: #f0faf3;
+    color: #17683f;
+}
+
+.visit-notice.error {
+    border-color: #efcbd0;
+    background: #fff5f5;
+    color: #a52b39;
+}
+
+.es-class-detail-trigger {
+    display: block;
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+}
+
+.es-class-detail-trigger h2 {
+    margin-bottom: 8px;
+    color: var(--primary);
+    font-size: 1.05rem;
+}
+
+.es-class-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.es-bulk-note {
+    grid-column: 1 / -1;
+    color: #58718d;
+    font-size: 0.85rem;
+}
+
+@media (max-width: 700px) {
+    .es-class footer {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+}
+
+.es-dashboard-section-title {
+    margin: 22px 0 12px;
+    color: var(--primary);
+    font-size: 1.08rem;
+}
+
+.es-dashboard-campaigns {
+    display: grid;
+    gap: 14px;
+}
+
+.es-campaign-pad {
+    padding: 18px;
+}
+
+.es-campaign-bar span {
+    background: #1683d2;
+}
+
+.es-campaign-form h3,
+.es-campaign-pad h3 {
+    color: #15334f;
+    margin-bottom: 8px;
+}
+
+.es-campaign-fields {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin: 16px 0;
+}
+
+.es-campaign-fields label,
+.es-report-filters label,
+.es-goal-row label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: #36516a;
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.es-campaign-fields input,
+.es-report-filters input,
+.es-report-filters select,
+.es-goal-row input {
+    min-height: 40px;
+    border: 1px solid #d4e0eb;
+    border-radius: 8px;
+    padding: 9px;
+    font: inherit;
+}
+
+.es-goal-list {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.es-goal-row {
+    display: grid;
+    grid-template-columns: minmax(140px, 1fr) 120px minmax(150px, 180px) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid #e1e9f1;
+    border-radius: 9px;
+}
+
+.es-report-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 12px;
+}
+
+.es-report-filters label {
+    flex: 1 1 170px;
+}
+
+.es-report-section {
+    margin-bottom: 18px;
+}
+
+.es-report-section .es-table {
+    min-width: 920px;
+}
+
+.es-report-title {
+    margin: 16px 0 10px;
+    color: var(--primary);
+    font-size: 1.05rem;
+}
+
+.es-report-note {
+    color: #637c93;
+    font-size: 0.84rem;
+    line-height: 1.6;
+}
+
+.es-lead-history {
+    background: #f7faff;
+    padding: 16px !important;
+}
+
+.es-lead-history ol {
+    margin: 10px 0 0;
+    padding-left: 22px;
+}
+
+.es-lead-history li {
+    margin: 6px 0;
+    color: #36516a;
+}
+
+.es-lead-history time {
+    font-weight: 700;
+}
+
+.es-table .es-lead-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 7px;
+    min-width: 250px;
+    width: fit-content;
+    max-width: 100%;
+    border: 1px solid #e4edf6;
+    border-radius: 9px;
+    background: #f7faff;
+    padding: 6px;
+}
+
+.es-table .es-lead-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 34px;
+    border: 1px solid #d5e0ec;
+    border-radius: 7px;
+    background: #fff;
+    padding: 6px 10px;
+    color: #244b70;
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 650;
+    line-height: 1.2;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+        background-color 120ms ease,
+        border-color 120ms ease,
+        color 120ms ease;
+}
+
+.es-table .es-lead-action:hover {
+    border-color: #9db8d3;
+    background: #f2f7fc;
+    color: #032066;
+}
+
+.es-table .es-lead-action:focus-visible {
+    outline: 3px solid #75b9ef;
+    outline-offset: 2px;
+}
+
+.es-table .es-lead-action-primary {
+    border-color: #032066;
+    background: #032066;
+    color: #fff;
+}
+
+.es-table .es-lead-action-primary:hover {
+    border-color: #173c87;
+    background: #173c87;
+    color: #fff;
+}
+
+.es-lead-action-count {
+    display: inline-grid;
+    min-width: 19px;
+    height: 19px;
+    place-items: center;
+    border-radius: 10px;
+    background: #e8f0f8;
+    color: #244b70;
+    font-size: 0.7rem;
+}
+
+.es-lead-action-primary .es-lead-action-count {
+    background: rgb(255 255 255 / 18%);
+    color: #fff;
+}
+
+@media (max-width: 700px) {
+    .es-campaign-fields {
+        grid-template-columns: 1fr;
+    }
+
+    .es-goal-row {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .es-goal-row label {
+        grid-column: 1 / -1;
+    }
+
+    .es-report-filters > * {
+        flex: 1 1 100%;
+    }
+}
+
+.es-sellers-table {
+    min-width: 980px;
+}
+
+.es-seller-stage-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    max-width: 540px;
+}
+
+.es-seller-stage {
+    padding: 3px 7px;
+    border-radius: 12px;
+    background: #edf3fa;
+    color: #36516a;
+    font-size: 0.72rem;
+    white-space: nowrap;
+}
+
+.es-seller-panel-heading {
+    margin-bottom: 14px;
+}
+
+.es-seller-panel-heading h2 {
+    color: var(--primary);
+}
+
+.es-seller-performance {
+    margin-top: 16px;
+    padding: 18px;
+    border: 1px solid #e1e9f1;
+    border-radius: 12px;
+    background: #fff;
+}
+
+.es-seller-performance-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.es-seller-performance-heading h3 {
+    color: #15334f;
+    font-size: 1.05rem;
+}
+
+.es-seller-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
+    margin: 15px 0;
+}
+
+.es-seller-metrics > div,
+.es-seller-funnel-stage {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 11px;
+    border-radius: 9px;
+    background: #f3f7fb;
+}
+
+.es-seller-metrics small,
+.es-seller-funnel-stage small {
+    color: #60758b;
+    font-size: 0.75rem;
+}
+
+.es-seller-metrics strong,
+.es-seller-funnel-stage strong {
+    color: var(--primary);
+    font-size: 1.15rem;
+}
+
+.es-seller-performance h4 {
+    margin: 16px 0 10px;
+    color: #15334f;
+}
+
+.es-seller-funnel {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(115px, 1fr));
+    gap: 8px;
+}

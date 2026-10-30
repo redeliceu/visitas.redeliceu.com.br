@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 
+@source '../js';
 @source '../views';
 @source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
 
@@ -8,4 +9,7 @@
         'Instrument Sans', ui-sans-serif, system-ui, sans-serif,
         'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',
         'Noto Color Emoji';
+    --color-blue-700: #032066;
+    --color-blue-800: #021b55;
+    --color-blue-900: #011746;
 }

@@ -23,11 +23,13 @@ class Turma extends Model
         ];
     }
 
+    /** @return BelongsTo<Unidade, $this> */
     public function unidade(): BelongsTo
     {
         return $this->belongsTo(Unidade::class);
     }
 
+    /** @return HasMany<Matricula, $this> */
     public function matriculas(): HasMany
     {
         return $this->hasMany(Matricula::class);

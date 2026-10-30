@@ -22,11 +22,13 @@ class MetaVendedor extends Model
         ];
     }
 
+    /** @return BelongsTo<Campanha, $this> */
     public function campanha(): BelongsTo
     {
         return $this->belongsTo(Campanha::class);
     }
 
+    /** @return BelongsTo<Vendedor, $this> */
     public function vendedor(): BelongsTo
     {
         return $this->belongsTo(Vendedor::class);

@@ -35,4 +35,8 @@ return [
         ],
     ],
 
+    'lead_api' => [
+        'token' => env('LEADS_API_TOKEN'),
+    ],
+
 ];
