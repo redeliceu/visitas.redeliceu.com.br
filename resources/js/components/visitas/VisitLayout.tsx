@@ -15,7 +15,8 @@ type Props = {
         | 'campanhas'
         | 'relatorios'
         | 'vendedores'
-        | 'painel-vendas';
+        | 'painel-vendas'
+        | 'legacy-import';
     auth: Auth;
     units: Unit[];
     selectedUnitId: number | null;
@@ -84,7 +85,7 @@ export default function VisitLayout({
     const [userMenuOpen, setUserMenuOpen] = useState(false);
     const page = usePage<{
         errors?: Record<string, string>;
-        flash?: { success?: string | null };
+        flash?: { success?: string | null; warning?: string | null };
     }>();
     const user = auth.user;
     const firstError = Object.values(page.props.errors ?? {})[0];
@@ -140,6 +141,24 @@ export default function VisitLayout({
                         ))}
                         {user.role === 'master' && (
                             <>
+                                <li>
+                                    <a
+                                        className={`nav-item${active === 'legacy-import' ? ' active' : ''}`}
+                                        href="/admin/legacy-import"
+                                        aria-current={
+                                            active === 'legacy-import'
+                                                ? 'page'
+                                                : undefined
+                                        }
+                                        onClick={() => setSidebarOpen(false)}
+                                    >
+                                        <i
+                                            className="fas fa-file-import"
+                                            aria-hidden="true"
+                                        />
+                                        <span>Importar planilha antiga</span>
+                                    </a>
+                                </li>
                                 <li>
                                     <a className="nav-item" href="/admin/users">
                                         <i
@@ -270,6 +289,11 @@ export default function VisitLayout({
                         {page.props.flash?.success && (
                             <div className="visit-notice" role="status">
                                 {page.props.flash.success}
+                            </div>
+                        )}
+                        {page.props.flash?.warning && (
+                            <div className="visit-notice warning" role="status">
+                                {page.props.flash.warning}
                             </div>
                         )}
                         {firstError && (
