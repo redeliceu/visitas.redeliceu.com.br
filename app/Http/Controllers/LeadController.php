@@ -2,9 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Ciclo;
 use App\Models\Lead;
+use App\Models\LeadHistory;
 use App\Models\LeadStatus;
 use App\Models\Serie;
+use App\Models\Turno;
 use App\Models\Unidade;
 use App\Models\User;
 use App\Models\Vendedor;
@@ -35,13 +38,16 @@ class LeadController extends Controller
                 'unidade:id,nome',
                 'vendedor:id,nome',
                 'serie:id,nome',
+                'ciclo:id,nome',
+                'turno:id,nome',
                 'status:id,nome',
-                'agendamento:id,lead_id',
                 'statusHistories.fromStatus:id,nome',
                 'statusHistories.toStatus:id,nome',
                 'statusHistories.changedBy:id,name',
+                'editHistories.user:id,name',
+                'agendamento',
+                'visitas.vendedor:id,nome',
             ])
-            ->withCount('statusHistories')
             ->orderByDesc('data')
             ->orderByDesc('id')
             ->get();
@@ -53,6 +59,8 @@ class LeadController extends Controller
             'sellers' => $sellers,
             'statuses' => LeadStatus::query()->where('ativo', true)->orderBy('ordem')->get(['id', 'nome']),
             'series' => Serie::query()->where('ativo', true)->orderBy('nome')->get(['id', 'nome']),
+            'cycles' => Ciclo::query()->where('ativo', true)->orderBy('nome')->get(['id', 'nome']),
+            'shifts' => Turno::query()->where('ativo', true)->orderBy('nome')->get(['id', 'nome']),
         ]);
     }
 
@@ -73,11 +81,60 @@ class LeadController extends Controller
         $user = $request->user();
         abort_unless($user instanceof User, 401);
         $this->unitAccess->ensureCanAccess($user, $lead->unidade_id);
-        abort_if($lead->agendamento()->exists(), 404);
-
         $data = $this->validatedLeadData($request);
         $this->unitAccess->ensureCanAccess($user, (int) $data['unidade_id']);
-        DB::transaction(fn () => $lead->update($data));
+
+        DB::transaction(function () use ($lead, $data, $user): void {
+            $lockedLead = Lead::query()->lockForUpdate()->findOrFail($lead->id);
+            $original = $lockedLead->getRawOriginal();
+            $lockedLead->fill($data);
+            $changes = [];
+            $fieldLabels = [
+                'unidade_id' => 'Unidade',
+                'vendedor_id' => 'Vendedor',
+                'data' => 'Data do contato',
+                'responsavel' => 'Responsável',
+                'telefone' => 'Telefone',
+                'telefone_secundario' => 'Telefone secundário',
+                'email' => 'E-mail',
+                'aluno' => 'Aluno',
+                'idade' => 'Idade',
+                'nascimento' => 'Data de nascimento',
+                'serie_id' => 'Série',
+                'ciclo_id' => 'Ciclo',
+                'turno_id' => 'Turno',
+                'canal_mkt' => 'Canal de marketing',
+                'canal_contato' => 'Canal de contato',
+                'status_id' => 'Situação',
+                'retorno_data' => 'Data de retorno',
+                'observacoes' => 'Observações',
+                'data_matricula' => 'Data de matrícula',
+                'desconto' => 'Desconto',
+            ];
+
+            foreach ($fieldLabels as $field => $label) {
+                if (! array_key_exists($field, $data) || ! $lockedLead->isDirty($field)) {
+                    continue;
+                }
+
+                $changes[] = [
+                    'field' => $label,
+                    'old' => $this->historyValue($field, $original[$field] ?? null),
+                    'new' => $this->historyValue($field, $lockedLead->getAttributes()[$field] ?? null),
+                ];
+            }
+
+            $lockedLead->save();
+
+            if ($changes !== []) {
+                LeadHistory::query()->create([
+                    'lead_id' => $lockedLead->id,
+                    'user_id' => $user->id,
+                    'changes' => $changes,
+                    'created_at' => now(),
+                ]);
+            }
+        });
 
         return back()->with('success', 'Lead atualizado.');
     }
@@ -162,13 +219,42 @@ class LeadController extends Controller
             'data' => ['nullable', 'date'],
             'responsavel' => ['required', 'string', 'max:255'],
             'telefone' => ['nullable', 'string', 'max:40'],
+            'telefone_secundario' => ['nullable', 'string', 'max:40'],
+            'email' => ['nullable', 'email', 'max:255'],
             'aluno' => ['nullable', 'string', 'max:255'],
             'idade' => ['nullable', 'integer', 'min:0', 'max:120'],
+            'nascimento' => ['nullable', 'date'],
             'serie_id' => ['nullable', 'integer', Rule::exists('series', 'id')->where('ativo', true)],
+            'ciclo_id' => ['nullable', 'integer', Rule::exists('ciclos', 'id')->where('ativo', true)],
+            'turno_id' => ['nullable', 'integer', Rule::exists('turnos', 'id')->where('ativo', true)],
             'canal_mkt' => ['nullable', 'string', 'max:255'],
             'canal_contato' => ['nullable', 'string', 'max:255'],
             'status_id' => ['required', 'integer', Rule::exists('lead_status', 'id')->where('ativo', true)],
+            'retorno_data' => ['nullable', 'date'],
             'observacoes' => ['nullable', 'string', 'max:10000'],
+            'data_matricula' => ['nullable', 'date'],
+            'desconto' => ['nullable', 'integer', 'min:0', 'max:100'],
         ]);
+    }
+
+    private function historyValue(string $field, mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (! is_int($value) && ! is_string($value)) {
+            return (string) $value;
+        }
+
+        return match ($field) {
+            'unidade_id' => Unidade::query()->find($value)->nome,
+            'vendedor_id' => Vendedor::query()->find($value)->nome,
+            'serie_id' => Serie::query()->find($value)->nome,
+            'ciclo_id' => Ciclo::query()->find($value)->nome,
+            'turno_id' => Turno::query()->find($value)->nome,
+            'status_id' => LeadStatus::query()->find($value)->nome,
+            default => (string) $value,
+        };
     }
 }

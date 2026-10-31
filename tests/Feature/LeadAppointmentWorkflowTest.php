@@ -133,6 +133,85 @@ class LeadAppointmentWorkflowTest extends TestCase
                 ->where('leads.0.agendamento.lead_id', $lead->id));
     }
 
+    public function test_scheduled_leads_remain_editable_and_record_changes_in_the_lead_history(): void
+    {
+        $unit = Unidade::query()->create(['nome' => 'Unidade Norte']);
+        $master = User::factory()->create(['role' => User::ROLE_MASTER]);
+        $newStatus = LeadStatus::query()->create(['nome' => 'Novo']);
+        LeadStatus::query()->create(['nome' => 'Agendado']);
+        $attendingStatus = LeadStatus::query()->create(['nome' => 'Atendendo']);
+        $lead = Lead::query()->create([
+            'unidade_id' => $unit->id,
+            'responsavel' => 'Família Original',
+            'telefone' => '11999990000',
+            'status_id' => $newStatus->id,
+        ]);
+
+        $this->actingAs($master)
+            ->post(route('leads.schedule', $lead), [
+                'data' => '2026-10-30',
+                'horario' => '09:30',
+            ])
+            ->assertRedirect(route('agendamentos.index'));
+
+        $this->actingAs($master)
+            ->put(route('leads.update', $lead), [
+                'unidade_id' => $unit->id,
+                'vendedor_id' => '',
+                'data' => '2026-10-29',
+                'responsavel' => 'Família Atualizada',
+                'telefone' => '11988887777',
+                'telefone_secundario' => '',
+                'email' => 'familia@example.com',
+                'aluno' => 'Estudante',
+                'idade' => '8',
+                'nascimento' => '2018-05-10',
+                'serie_id' => '',
+                'ciclo_id' => '',
+                'turno_id' => '',
+                'canal_mkt' => 'Indicação',
+                'canal_contato' => 'WhatsApp',
+                'status_id' => $attendingStatus->id,
+                'retorno_data' => '',
+                'observacoes' => 'Dados revisados',
+                'data_matricula' => '',
+                'desconto' => '',
+            ])
+            ->assertSessionHasNoErrors()
+            ->assertSessionHas('success', 'Lead atualizado.');
+
+        $lead->refresh();
+        $this->assertSame('Família Atualizada', $lead->responsavel);
+        $this->assertSame($attendingStatus->id, $lead->status_id);
+        $this->assertDatabaseCount('agendamentos', 1);
+        $this->assertDatabaseHas('lead_histories', [
+            'lead_id' => $lead->id,
+            'user_id' => $master->id,
+        ]);
+
+        $history = $lead->editHistories()->sole();
+        $this->assertContains([
+            'field' => 'Responsável',
+            'old' => 'Família Original',
+            'new' => 'Família Atualizada',
+        ], $history->changes);
+        $this->assertContains([
+            'field' => 'Situação',
+            'old' => 'Agendado',
+            'new' => 'Atendendo',
+        ], $history->changes);
+
+        $this->actingAs($master)
+            ->get(route('leads.index'))
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('visitas/leads')
+                ->where('leads.0.status.nome', 'Atendendo')
+                ->where('leads.0.agendamento.id', $lead->agendamento()->value('id'))
+                ->where('leads.0.edit_histories.0.user.name', $master->name)
+                ->where('leads.0.edit_histories.0.changes.0.field', 'Data do contato')
+                ->has('leads.0.status_histories', 3));
+    }
+
     public function test_appointment_list_is_limited_to_the_users_assigned_units(): void
     {
         $unit = Unidade::query()->create(['nome' => 'Unidade Norte']);
@@ -239,6 +318,13 @@ class LeadAppointmentWorkflowTest extends TestCase
         $this->post(route('agendamentos.convert', $appointment))
             ->assertSessionHasNoErrors();
         $this->assertDatabaseCount('visitas', 1);
+
+        $this->get(route('leads.index'))
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('visitas/leads')
+                ->has('leads.0.visitas', 1)
+                ->where('leads.0.visitas.0.status', 'Aguardando')
+                ->where('leads.0.agendamento.status', 'Compareceu'));
     }
 
     public function test_cancelled_appointment_cannot_be_converted(): void

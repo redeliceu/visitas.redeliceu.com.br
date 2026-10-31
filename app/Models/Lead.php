@@ -117,6 +117,14 @@ class Lead extends Model
             ->orderBy('id');
     }
 
+    /** @return HasMany<LeadHistory, $this> */
+    public function editHistories(): HasMany
+    {
+        return $this->hasMany(LeadHistory::class)
+            ->orderByDesc('created_at')
+            ->orderByDesc('id');
+    }
+
     /** @return HasMany<Visita, $this> */
     public function visitas(): HasMany
     {
