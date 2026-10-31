@@ -205,6 +205,19 @@
     text-decoration: underline;
 }
 
+.es-table tbody tr[tabindex='0'] {
+    cursor: pointer;
+}
+
+.es-table tbody tr[tabindex='0']:hover {
+    background: #f7faff;
+}
+
+.es-table tbody tr[tabindex='0']:focus-visible {
+    outline: 2px solid #1d4ed8;
+    outline-offset: -2px;
+}
+
 .es-form:has(.es-lead-detail) {
     display: block;
 }
@@ -212,6 +225,36 @@
 .es-lead-detail {
     display: grid;
     gap: 18px;
+}
+
+.es-lead-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 18px;
+    border-bottom: 1px solid #dce6f0;
+}
+
+.es-lead-tabs button {
+    padding: 9px 13px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: #526b83;
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.es-lead-tabs button.active {
+    border-bottom-color: #123b68;
+    color: #123b68;
+}
+
+.es-lead-tabs button:focus-visible {
+    outline: 2px solid #1d4ed8;
+    outline-offset: -2px;
 }
 
 .es-lead-detail section {

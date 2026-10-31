@@ -39,6 +39,13 @@ export default function RecordModal({
 }: Props) {
     return (
         <div className="es-modal" role="presentation">
+            <button
+                aria-label="Fechar modal"
+                className="es-modal-backdrop"
+                onClick={onClose}
+                tabIndex={-1}
+                type="button"
+            />
             <section
                 aria-labelledby="modal-title"
                 aria-modal="true"
