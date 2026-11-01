@@ -46,6 +46,7 @@ class LeadController extends Controller
                 'statusHistories.changedBy:id,name',
                 'editHistories.user:id,name',
                 'agendamento',
+                'agendamentos',
                 'visitas.vendedor:id,nome',
             ])
             ->orderByDesc('data')
@@ -153,10 +154,6 @@ class LeadController extends Controller
         DB::transaction(function () use ($lead, $data): void {
             $lockedLead = Lead::query()->lockForUpdate()->findOrFail($lead->id);
 
-            if ($lockedLead->agendamento()->exists()) {
-                abort(409, 'Este lead já possui um agendamento.');
-            }
-
             $lockedLead->agendamento()->create([
                 'unidade_id' => $lockedLead->unidade_id,
                 'vendedor_id' => $lockedLead->vendedor_id,
@@ -168,6 +165,7 @@ class LeadController extends Controller
                 'aluno' => $lockedLead->aluno,
                 'observacoes' => $lockedLead->observacoes,
                 'status' => 'Agendado',
+                'fonte' => 'Manual',
             ]);
 
             $scheduledStatus = LeadStatus::query()->where('nome', 'Agendado')->first();

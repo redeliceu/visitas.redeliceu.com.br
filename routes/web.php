@@ -44,6 +44,7 @@ Route::middleware(['auth', 'active'])->group(function () {
     Route::put('/visitas/{visita}', [VisitaController::class, 'update'])->name('visitas.update');
     Route::patch('/visitas/{visita}/status', [VisitaController::class, 'updateStatus'])->name('visitas.status');
     Route::post('/visitas/{visita}/matriculas', [VisitaController::class, 'enroll'])->name('visitas.enroll');
+    Route::patch('/visitas/{visita}/matriculas/turma', [VisitaController::class, 'assignClass'])->name('visitas.enrollments.assign-class');
     Route::post('/visitas/{visita}/matriculas/cancel', [VisitaController::class, 'cancelEnrollment'])->name('visitas.enrollments.cancel');
     Route::delete('/visitas/{visita}', [VisitaController::class, 'destroy'])->name('visitas.destroy');
     Route::get('/turmas', [TurmaController::class, 'index'])->name('turmas.index');

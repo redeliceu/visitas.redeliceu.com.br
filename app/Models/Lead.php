@@ -134,7 +134,16 @@ class Lead extends Model
     /** @return HasOne<Agendamento, $this> */
     public function agendamento(): HasOne
     {
-        return $this->hasOne(Agendamento::class);
+        return $this->hasOne(Agendamento::class)->latestOfMany();
+    }
+
+    /** @return HasMany<Agendamento, $this> */
+    public function agendamentos(): HasMany
+    {
+        return $this->hasMany(Agendamento::class)
+            ->orderByDesc('data')
+            ->orderByDesc('horario')
+            ->orderByDesc('id');
     }
 
     /** @return HasMany<Matricula, $this> */

@@ -210,6 +210,64 @@ class VisitEnrollmentWorkflowTest extends TestCase
         $this->assertSame(1, Matricula::query()->count());
     }
 
+    public function test_enrollment_can_be_recorded_without_a_class_and_a_class_can_be_assigned_later(): void
+    {
+        $unit = Unidade::query()->create(['nome' => 'Unidade Norte']);
+        $user = User::factory()->create(['role' => User::ROLE_GESTOR]);
+        $user->unidades()->attach($unit);
+        $class = Turma::query()->create([
+            'unidade_id' => $unit->id,
+            'nome' => '1º ano',
+            'periodo' => 'Manhã',
+            'capacidade' => 1,
+        ]);
+        $matriculatedStatus = LeadStatus::query()->create(['nome' => 'Matriculado']);
+        $lead = Lead::query()->create([
+            'unidade_id' => $unit->id,
+            'responsavel' => 'Família sem turma',
+            'status_id' => LeadStatus::query()->create(['nome' => 'Compareceu'])->id,
+        ]);
+        $visit = $this->createVisit($unit, $lead);
+
+        $this->actingAs($user)
+            ->post(route('visitas.enroll', $visit), ['turma_id' => ''])
+            ->assertSessionHasNoErrors();
+
+        $enrollment = Matricula::query()->sole();
+        $this->assertNull($enrollment->turma_id);
+        $this->assertSame('Ativa', $enrollment->status);
+        $this->assertSame('Matriculado', $visit->fresh()->status);
+        $this->assertSame($matriculatedStatus->id, $lead->fresh()->status_id);
+        $this->assertDatabaseHas('matricula_audits', [
+            'matricula_id' => $enrollment->id,
+            'acao' => 'Criada',
+            'turma_id' => null,
+            'status' => 'Ativa',
+        ]);
+
+        $this->get(route('visitas.index'))
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('visits.0.matricula_ativa.turma_id', null));
+        $this->get(route('relatorios.index', [
+            'inicio' => '2026-10-30',
+            'fim' => '2026-10-31',
+        ]))
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('report.all.sales', 1));
+
+        $this->patch(route('visitas.enrollments.assign-class', $visit), [
+            'turma_id' => $class->id,
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame($class->id, $enrollment->fresh()->turma_id);
+        $this->assertDatabaseHas('matricula_audits', [
+            'matricula_id' => $enrollment->id,
+            'acao' => 'Turma definida',
+            'turma_anterior_id' => null,
+            'turma_id' => $class->id,
+        ]);
+    }
+
     public function test_enrollment_cancellation_preserves_history_and_visit_cannot_be_deleted(): void
     {
         $unit = Unidade::query()->create(['nome' => 'Unidade Norte']);

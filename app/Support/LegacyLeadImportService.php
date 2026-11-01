@@ -5,6 +5,7 @@ namespace App\Support;
 use App\Models\Agendamento;
 use App\Models\Ciclo;
 use App\Models\Lead;
+use App\Models\LeadHistory;
 use App\Models\LeadStatus;
 use App\Models\Serie;
 use App\Models\Turno;
@@ -20,6 +21,7 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\Exception as SpreadsheetException;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Reader\Exception as ReaderException;
 use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
@@ -65,13 +67,14 @@ class LegacyLeadImportService
      *     appointments_updated: int,
      *     visits_created: int,
      *     visits_updated: int,
-     *     skipped_without_date: int,
-     *     skipped_without_contact: int,
+     *     imported_without_date: int,
+     *     imported_without_contact: int,
      *     failed_rows: list<string>,
+     *     raw_value_warnings: list<string>,
      *     unmatched_series: array<string, int>
      * }
      */
-    public function import(UploadedFile $file, int $unitId): array
+    public function import(UploadedFile $file, int $unitId, ?int $userId = null): array
     {
         $path = $file->getRealPath();
 
@@ -97,8 +100,7 @@ class LegacyLeadImportService
         $catalogs = $this->catalogs();
         $rows = [];
         $failedRows = [];
-        $skippedWithoutDate = 0;
-        $skippedWithoutContact = 0;
+        $rawValueWarnings = [];
         $unmatchedSeries = [];
 
         for ($rowNumber = 2; $rowNumber <= $worksheet->getHighestDataRow(); $rowNumber++) {
@@ -117,12 +119,6 @@ class LegacyLeadImportService
                 continue;
             }
 
-            if ($this->isBlank($cells['data']['value'])) {
-                $skippedWithoutDate++;
-
-                continue;
-            }
-
             $phone = $this->cellString($cells['telefone']);
             $secondaryPhone = $this->cellString($cells['telefone_secundario']);
             $email = $this->cellString($cells['email']);
@@ -136,14 +132,9 @@ class LegacyLeadImportService
                 }
             }
 
-            if ($phones === [] && $email === '') {
-                $skippedWithoutContact++;
-
-                continue;
-            }
-
             try {
                 $rowUnmatchedSeries = [];
+                $rowWarnings = [];
                 $rows[] = $this->parseRow(
                     $cells,
                     $rowNumber,
@@ -153,9 +144,13 @@ class LegacyLeadImportService
                     $phones,
                     $catalogs,
                     $rowUnmatchedSeries,
+                    $rowWarnings,
                 );
                 foreach ($rowUnmatchedSeries as $seriesName => $count) {
                     $unmatchedSeries[$seriesName] = ($unmatchedSeries[$seriesName] ?? 0) + $count;
+                }
+                foreach ($rowWarnings as $warning) {
+                    $rawValueWarnings[] = "Linha {$rowNumber}: {$warning}";
                 }
             } catch (InvalidArgumentException $exception) {
                 $failedRows[] = "Linha {$rowNumber}: {$exception->getMessage()}";
@@ -165,9 +160,9 @@ class LegacyLeadImportService
         return DB::transaction(function () use (
             $rows,
             $unitId,
+            $userId,
             $failedRows,
-            $skippedWithoutDate,
-            $skippedWithoutContact,
+            $rawValueWarnings,
             $unmatchedSeries,
         ): array {
             $unit = Unidade::query()->whereKey($unitId)->lockForUpdate()->firstOrFail();
@@ -177,9 +172,17 @@ class LegacyLeadImportService
             $leadsById = $leads->keyBy('id');
             $phoneIndex = [];
             $emailIndex = [];
+            $phoneContactIndex = [];
+            $emailContactIndex = [];
 
             foreach ($leads as $lead) {
-                $this->addLeadToIndexes($lead, $phoneIndex, $emailIndex);
+                $this->addLeadToIndexes(
+                    $lead,
+                    $phoneIndex,
+                    $emailIndex,
+                    $phoneContactIndex,
+                    $emailContactIndex,
+                );
             }
 
             $result = [
@@ -190,23 +193,42 @@ class LegacyLeadImportService
                 'appointments_updated' => 0,
                 'visits_created' => 0,
                 'visits_updated' => 0,
-                'skipped_without_date' => $skippedWithoutDate,
-                'skipped_without_contact' => $skippedWithoutContact,
+                'imported_without_date' => 0,
+                'imported_without_contact' => 0,
                 'failed_rows' => $failedRows,
+                'raw_value_warnings' => $rawValueWarnings,
                 'unmatched_series' => $unmatchedSeries,
             ];
 
             foreach ($rows as $row) {
-                $lead = $this->findLead($row, $leadsById, $phoneIndex, $emailIndex);
+                $ambiguous = false;
+                $lead = $this->findLead(
+                    $row,
+                    $leadsById,
+                    $phoneIndex,
+                    $emailIndex,
+                    $phoneContactIndex,
+                    $emailContactIndex,
+                    $ambiguous,
+                );
+                if ($ambiguous) {
+                    $result['failed_rows'][] = "Linha {$row['row_number']}: o contato corresponde a mais de uma lead; a linha precisa de revisão manual.";
+
+                    continue;
+                }
+
                 $isNew = $lead === null;
-                $historicalDate = $row['data']->format('Y-m-d H:i:s');
+                $historicalDate = $row['data']?->format('Y-m-d H:i:s');
+                $original = [];
 
                 if ($lead === null) {
                     $lead = new Lead;
                     $lead->unidade()->associate($unit);
                     $lead->origem = 'Importação histórica';
                     $lead->data = $historicalDate;
-                    $lead->setCreatedAt($historicalDate);
+                    if ($historicalDate !== null) {
+                        $lead->setCreatedAt($historicalDate);
+                    }
 
                     $defaults = array_fill_keys([
                         'vendedor_id',
@@ -230,9 +252,25 @@ class LegacyLeadImportService
                     ], null);
                     $lead->fill(array_replace($defaults, $row['fields']));
                 } else {
-                    $this->removeLeadFromIndexes($lead, $phoneIndex, $emailIndex);
-                    $lead->data = $historicalDate;
-                    $lead->fill($row['fields']);
+                    $original = $lead->getRawOriginal();
+                    $this->removeLeadFromIndexes(
+                        $lead,
+                        $phoneIndex,
+                        $emailIndex,
+                        $phoneContactIndex,
+                        $emailContactIndex,
+                    );
+                    if ($historicalDate !== null) {
+                        $lead->data = $historicalDate;
+                    }
+                    $fields = $row['fields'];
+                    if (isset($fields['observacoes']) && $lead->observacoes !== null) {
+                        $fields['observacoes'] = implode("\n", array_values(array_unique(array_filter([
+                            ...explode("\n", $lead->observacoes),
+                            ...explode("\n", $fields['observacoes']),
+                        ]))));
+                    }
+                    $lead->fill($fields);
                 }
 
                 if ($row['seller_name'] !== '') {
@@ -254,11 +292,28 @@ class LegacyLeadImportService
                 }
 
                 $leadsById->put($lead->id, $lead);
-                $this->addLeadToIndexes($lead, $phoneIndex, $emailIndex);
+                $this->addLeadToIndexes(
+                    $lead,
+                    $phoneIndex,
+                    $emailIndex,
+                    $phoneContactIndex,
+                    $emailContactIndex,
+                );
 
-                $appointment = $lead->agendamento()->first();
+                if (! $isNew && $lead->wasChanged()) {
+                    $this->recordImportedLeadChanges($lead, $original, $userId);
+                }
+
+                $result['imported_without_date'] += $row['data'] === null ? 1 : 0;
+                $result['imported_without_contact'] += $row['phones'] === [] && $row['email_key'] === '' ? 1 : 0;
+
+                $appointment = null;
 
                 if ($row['appointment_date'] instanceof CarbonImmutable) {
+                    $appointment = $lead->agendamentos()
+                        ->where('fonte', 'Importação histórica')
+                        ->whereDate('data', $row['appointment_date']->toDateString())
+                        ->first();
                     $appointmentWasNew = $appointment === null;
                     $appointment ??= new Agendamento;
                     $appointment->fill([
@@ -274,6 +329,7 @@ class LegacyLeadImportService
                         'status' => $row['visit_date'] instanceof CarbonImmutable
                             ? 'Compareceu'
                             : 'Agendado',
+                        'fonte' => 'Importação histórica',
                     ]);
                     $appointment->save();
 
@@ -445,9 +501,10 @@ class LegacyLeadImportService
      * }  $catalogs
      * @param  array<string, int>  $unmatchedSeries
      * @param  list<string>  $phones
+     * @param  list<string>  $rowWarnings
      * @return array{
      *     row_number: int,
-     *     data: CarbonImmutable,
+     *     data: CarbonImmutable|null,
      *     fields: array<string, mixed>,
      *     phones: list<string>,
      *     student_key: string,
@@ -472,21 +529,22 @@ class LegacyLeadImportService
         array $phones,
         array $catalogs,
         array &$unmatchedSeries,
+        array &$rowWarnings,
     ): array {
-        $data = $this->parseDate($cells['data']['value'], 'Data');
-        $fields = ['data' => $data];
+        $notes = [];
+        $data = $this->parseDateCell($cells['data'], 'Data', $notes, $rowWarnings);
+        $fields = $data === null ? [] : ['data' => $data];
         $sellerName = $this->cellString($cells['seller']);
-        $responsavel = $this->cellString($cells['responsavel']);
         $aluno = $this->cellString($cells['aluno']);
         $statusName = $this->cellString($cells['status']);
         $statusKey = $this->normalizeLabel($statusName);
 
         if ($statusName !== '') {
             if (! isset($catalogs['statuses'][$statusKey])) {
-                throw new InvalidArgumentException("status \"{$statusName}\" não existe no catálogo.");
+                $this->preserveUnmappedValue('Status', $cells['status'], $notes, $rowWarnings);
+            } else {
+                $fields['status_id'] = $catalogs['statuses'][$statusKey];
             }
-
-            $fields['status_id'] = $catalogs['statuses'][$statusKey];
         }
 
         $cycleName = $this->cellString($cells['ciclo']);
@@ -499,10 +557,10 @@ class LegacyLeadImportService
             }
 
             if (! isset($catalogs['cycles'][$cycleKey])) {
-                throw new InvalidArgumentException("ciclo \"{$cycleName}\" não existe no catálogo.");
+                $this->preserveUnmappedValue('Ciclo', $cells['ciclo'], $notes, $rowWarnings);
+            } else {
+                $fields['ciclo_id'] = $catalogs['cycles'][$cycleKey];
             }
-
-            $fields['ciclo_id'] = $catalogs['cycles'][$cycleKey];
         }
 
         $serieName = $this->cellString($cells['serie']);
@@ -511,7 +569,6 @@ class LegacyLeadImportService
 
         if ($serieName !== '' && $serie === null) {
             $unmatchedSeries[$serieName] = ($unmatchedSeries[$serieName] ?? 0) + 1;
-            $fields['serie_id'] = null;
         } elseif ($serie !== null) {
             $fields['serie_id'] = $serie['id'];
         }
@@ -522,10 +579,10 @@ class LegacyLeadImportService
             $turnKey = $this->normalizeLabel($turnName);
 
             if (! isset($catalogs['turns'][$turnKey])) {
-                throw new InvalidArgumentException("turno \"{$turnName}\" não existe no catálogo.");
+                $this->preserveUnmappedValue('Turno', $cells['turno'], $notes, $rowWarnings);
+            } else {
+                $fields['turno_id'] = $catalogs['turns'][$turnKey];
             }
-
-            $fields['turno_id'] = $catalogs['turns'][$turnKey];
         }
 
         $this->copyText($fields, $cells, 'responsavel');
@@ -542,71 +599,51 @@ class LegacyLeadImportService
             $fields['telefone_secundario'] = $secondaryPhone;
         }
 
-        $birth = $this->optionalDate($cells['nascimento']['value'], 'Data Nascimento');
+        $birth = $this->parseDateCell($cells['nascimento'], 'Data Nascimento', $notes, $rowWarnings);
         if ($birth !== null) {
             $fields['nascimento'] = $birth->toDateString();
         }
 
         $age = $this->cellString($cells['idade']);
-        $ageNote = null;
         if ($age !== '' && preg_match('/^\s*(\d{1,3})(?:\.0+)?(?:\s+anos)?\s*$/iu', $age, $matches)) {
             $ageValue = (int) $matches[1];
             if ($ageValue > 120) {
-                throw new InvalidArgumentException("idade \"{$age}\" está fora do intervalo permitido.");
+                $this->preserveUnmappedValue('Idade', $cells['idade'], $notes, $rowWarnings);
+            } else {
+                $fields['idade'] = $ageValue;
             }
-
-            $fields['idade'] = $ageValue;
         } elseif ($age !== '') {
-            $ageNote = "Idade (texto original): {$age}";
+            $this->preserveUnmappedValue('Idade', $cells['idade'], $notes, $rowWarnings);
         }
 
-        $returnNote = null;
-        $returnDate = null;
-        if (! $this->isBlank($cells['return_date']['value'])) {
-            try {
-                $returnDate = $this->parseDate($cells['return_date']['value'], 'Data Retorno');
-            } catch (InvalidArgumentException) {
-                $returnNote = $this->cellString($cells['return_date']);
-            }
-
-            if ($returnDate !== null) {
-                $fields['retorno_data'] = $returnDate;
-            }
+        $returnDate = $this->parseDateCell($cells['return_date'], 'Data Retorno', $notes, $rowWarnings);
+        if ($returnDate !== null) {
+            $fields['retorno_data'] = $returnDate;
         }
 
         $discount = $this->cellString($cells['desconto']);
         if ($discount !== '') {
-            $fields['desconto'] = $this->parseDiscount($discount);
+            try {
+                $fields['desconto'] = $this->parseDiscount($discount);
+            } catch (InvalidArgumentException) {
+                $this->preserveUnmappedValue('Desconto', $cells['desconto'], $notes, $rowWarnings);
+            }
         }
 
-        $matriculationDate = $this->optionalDate(
-            $cells['data_matricula']['value'],
-            'Data Matricula',
-        );
+        $matriculationDate = $this->parseDateCell($cells['data_matricula'], 'Data Matricula', $notes, $rowWarnings);
         if ($matriculationDate !== null) {
             $fields['data_matricula'] = $matriculationDate;
         }
 
         $comment = $this->cellString($cells['comment']);
-        $observations = implode("\n", array_values(array_unique(array_filter([
-            $comment,
-            $returnNote,
-            $ageNote,
-        ]))));
+        $appointmentDate = $this->parseDateCell($cells['appointment_date'], 'Data Agendamento', $notes, $rowWarnings);
+        $appointmentTime = $this->parseTimeCell($cells['appointment_time'], 'Hora Agendada', $notes, $rowWarnings);
+        $visitDate = $this->parseDateCell($cells['visit_date'], 'Data Visita', $notes, $rowWarnings);
+        $visitTime = $this->parseTimeCell($cells['visit_time'], 'Hora Visita', $notes, $rowWarnings);
+        $observations = implode("\n", array_values(array_unique(array_filter([$comment, ...$notes]))));
         if ($observations !== '') {
             $fields['observacoes'] = $observations;
         }
-
-        $appointmentDate = $this->optionalDate(
-            $cells['appointment_date']['value'],
-            'Data Agendamento',
-        );
-        $appointmentTime = $this->optionalTime(
-            $cells['appointment_time']['value'],
-            'Hora Agendada',
-        );
-        $visitDate = $this->optionalDate($cells['visit_date']['value'], 'Data Visita');
-        $visitTime = $this->optionalTime($cells['visit_time']['value'], 'Hora Visita');
 
         return [
             'row_number' => $rowNumber,
@@ -641,6 +678,66 @@ class LegacyLeadImportService
     }
 
     /**
+     * @param  array{value: mixed, display: string}  $cell
+     * @param  list<string>  $notes
+     * @param  list<string>  $warnings
+     */
+    private function parseDateCell(array $cell, string $label, array &$notes, array &$warnings): ?CarbonImmutable
+    {
+        if ($this->isBlank($cell['value'])) {
+            return null;
+        }
+
+        try {
+            return $this->parseDate($cell['value'], $label);
+        } catch (InvalidArgumentException|SpreadsheetException) {
+            $this->preserveUnmappedValue($label, $cell, $notes, $warnings);
+
+            return null;
+        }
+    }
+
+    /**
+     * @param  array{value: mixed, display: string}  $cell
+     * @param  list<string>  $notes
+     * @param  list<string>  $warnings
+     */
+    private function parseTimeCell(array $cell, string $label, array &$notes, array &$warnings): ?string
+    {
+        if ($this->isBlank($cell['value'])) {
+            return null;
+        }
+
+        try {
+            return $this->optionalTime($cell['value'], $label);
+        } catch (InvalidArgumentException|SpreadsheetException) {
+            $this->preserveUnmappedValue($label, $cell, $notes, $warnings);
+
+            return null;
+        }
+    }
+
+    /**
+     * @param  array{value: mixed, display: string}  $cell
+     * @param  list<string>  $notes
+     * @param  list<string>  $warnings
+     */
+    private function preserveUnmappedValue(
+        string $label,
+        array $cell,
+        array &$notes,
+        array &$warnings,
+    ): void {
+        $value = $this->cellString($cell);
+        if ($value === '') {
+            return;
+        }
+
+        $notes[] = "{$label} (valor original): {$value}";
+        $warnings[] = "{$label}: \"{$value}\" inválida ou sem correspondência; valor original salvo nas observações.";
+    }
+
+    /**
      * @param  array{
      *     row_number: int,
      *     phones: list<string>,
@@ -650,28 +747,51 @@ class LegacyLeadImportService
      * @param  Collection<int, Lead>  $leadsById
      * @param  array<string, list<int>>  $phoneIndex
      * @param  array<string, list<int>>  $emailIndex
+     * @param  array<string, list<int>>  $phoneContactIndex
+     * @param  array<string, list<int>>  $emailContactIndex
      */
-    private function findLead(array $row, Collection $leadsById, array $phoneIndex, array $emailIndex): ?Lead
-    {
+    private function findLead(
+        array $row,
+        Collection $leadsById,
+        array $phoneIndex,
+        array $emailIndex,
+        array $phoneContactIndex,
+        array $emailContactIndex,
+        bool &$ambiguous,
+    ): ?Lead {
         $studentKey = $row['student_key'];
         $matches = [];
 
-        if ($row['phones'] !== [] && $studentKey !== '') {
+        if ($studentKey !== '') {
             foreach ($row['phones'] as $phone) {
                 foreach ($phoneIndex[$phone.'|'.$studentKey] ?? [] as $leadId) {
                     $matches[$leadId] = true;
                 }
             }
-        } elseif ($row['email_key'] !== '' && $studentKey !== '') {
-            foreach ($emailIndex[$row['email_key'].'|'.$studentKey] ?? [] as $leadId) {
-                $matches[$leadId] = true;
+
+            if ($row['email_key'] !== '') {
+                foreach ($emailIndex[$row['email_key'].'|'.$studentKey] ?? [] as $leadId) {
+                    $matches[$leadId] = true;
+                }
+            }
+        } else {
+            foreach ($row['phones'] as $phone) {
+                foreach ($phoneContactIndex[$phone] ?? [] as $leadId) {
+                    $matches[$leadId] = true;
+                }
+            }
+
+            if ($row['email_key'] !== '') {
+                foreach ($emailContactIndex[$row['email_key']] ?? [] as $leadId) {
+                    $matches[$leadId] = true;
+                }
             }
         }
 
         if (count($matches) > 1) {
-            throw ValidationException::withMessages([
-                'arquivo' => "A linha {$row['row_number']} corresponde a mais de uma lead existente. Corrija a planilha ou os dados duplicados antes de importar.",
-            ]);
+            $ambiguous = true;
+
+            return null;
         }
 
         if ($matches === []) {
@@ -684,38 +804,56 @@ class LegacyLeadImportService
     /**
      * @param  array<string, list<int>>  $phoneIndex
      * @param  array<string, list<int>>  $emailIndex
+     * @param  array<string, list<int>>  $phoneContactIndex
+     * @param  array<string, list<int>>  $emailContactIndex
      */
-    private function addLeadToIndexes(Lead $lead, array &$phoneIndex, array &$emailIndex): void
-    {
+    private function addLeadToIndexes(
+        Lead $lead,
+        array &$phoneIndex,
+        array &$emailIndex,
+        array &$phoneContactIndex,
+        array &$emailContactIndex,
+    ): void {
         $studentKey = $this->normalizeIdentity((string) $lead->aluno);
-
-        if ($studentKey === '') {
-            return;
-        }
 
         foreach ([
             $this->normalizePhone((string) $lead->telefone),
             $this->normalizePhone((string) $lead->telefone_secundario),
         ] as $phone) {
             if ($phone !== null) {
-                $this->addToIndex($phoneIndex, $phone.'|'.$studentKey, $lead->id);
+                $this->addToIndex($phoneContactIndex, $phone, $lead->id);
+                if ($studentKey !== '') {
+                    $this->addToIndex($phoneIndex, $phone.'|'.$studentKey, $lead->id);
+                }
             }
         }
 
         $email = mb_strtolower(trim((string) $lead->email));
         if ($email !== '') {
-            $this->addToIndex($emailIndex, $email.'|'.$studentKey, $lead->id);
+            $this->addToIndex($emailContactIndex, $email, $lead->id);
+            if ($studentKey !== '') {
+                $this->addToIndex($emailIndex, $email.'|'.$studentKey, $lead->id);
+            }
         }
     }
 
     /**
      * @param  array<string, list<int>>  $phoneIndex
      * @param  array<string, list<int>>  $emailIndex
+     * @param  array<string, list<int>>  $phoneContactIndex
+     * @param  array<string, list<int>>  $emailContactIndex
      */
-    private function removeLeadFromIndexes(Lead $lead, array &$phoneIndex, array &$emailIndex): void
-    {
+    private function removeLeadFromIndexes(
+        Lead $lead,
+        array &$phoneIndex,
+        array &$emailIndex,
+        array &$phoneContactIndex,
+        array &$emailContactIndex,
+    ): void {
         $this->removeFromIndex($phoneIndex, $lead->id);
         $this->removeFromIndex($emailIndex, $lead->id);
+        $this->removeFromIndex($phoneContactIndex, $lead->id);
+        $this->removeFromIndex($emailContactIndex, $lead->id);
     }
 
     /**
@@ -743,6 +881,77 @@ class LegacyLeadImportService
                 unset($index[$key]);
             }
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $original
+     */
+    private function recordImportedLeadChanges(Lead $lead, array $original, ?int $userId): void
+    {
+        $labels = [
+            'vendedor_id' => 'Vendedor',
+            'data' => 'Data do contato',
+            'responsavel' => 'Responsável',
+            'telefone' => 'Telefone',
+            'telefone_secundario' => 'Telefone secundário',
+            'email' => 'E-mail',
+            'aluno' => 'Aluno',
+            'idade' => 'Idade',
+            'nascimento' => 'Data de nascimento',
+            'serie_id' => 'Série',
+            'ciclo_id' => 'Ciclo',
+            'turno_id' => 'Turno',
+            'canal_mkt' => 'Canal de marketing',
+            'canal_contato' => 'Canal de contato',
+            'status_id' => 'Situação',
+            'retorno_data' => 'Data de retorno',
+            'observacoes' => 'Observações',
+            'data_matricula' => 'Data de matrícula',
+            'desconto' => 'Desconto',
+        ];
+        $changes = [];
+        $updated = $lead->getChanges();
+
+        foreach ($labels as $field => $label) {
+            if (! array_key_exists($field, $updated)) {
+                continue;
+            }
+
+            $changes[] = [
+                'field' => $label,
+                'old' => $this->historyValue($field, $original[$field] ?? null),
+                'new' => $this->historyValue($field, $updated[$field]),
+            ];
+        }
+
+        if ($changes !== []) {
+            LeadHistory::query()->create([
+                'lead_id' => $lead->id,
+                'user_id' => $userId,
+                'changes' => $changes,
+                'created_at' => now(),
+            ]);
+        }
+    }
+
+    private function historyValue(string $field, mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (! is_int($value) && ! is_string($value)) {
+            return (string) $value;
+        }
+
+        return match ($field) {
+            'vendedor_id' => Vendedor::query()->find($value)->nome,
+            'serie_id' => Serie::query()->find($value)->nome,
+            'ciclo_id' => Ciclo::query()->find($value)->nome,
+            'turno_id' => Turno::query()->find($value)->nome,
+            'status_id' => LeadStatus::query()->find($value)->nome,
+            default => (string) $value,
+        };
     }
 
     /**
@@ -853,11 +1062,6 @@ class LegacyLeadImportService
         }
 
         return $date;
-    }
-
-    private function optionalDate(mixed $value, string $label): ?CarbonImmutable
-    {
-        return $this->isBlank($value) ? null : $this->parseDate($value, $label);
     }
 
     private function optionalTime(mixed $value, string $label): ?string

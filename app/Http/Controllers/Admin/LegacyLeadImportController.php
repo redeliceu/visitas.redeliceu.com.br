@@ -39,6 +39,7 @@ class LegacyLeadImportController extends Controller
         $result = $importer->import(
             $file,
             (int) $data['unidade_id'],
+            $user->id,
         );
         $unit = Unidade::query()->findOrFail((int) $data['unidade_id']);
         $report = [
@@ -55,14 +56,21 @@ class LegacyLeadImportController extends Controller
             $result['visits_created'] + $result['visits_updated'],
         );
 
-        $skipped = $result['skipped_without_date'] + $result['skipped_without_contact'];
-        if ($skipped > 0) {
-            $message .= " {$skipped} linha(s) ignorada(s) por falta de Data ou telefone/e-mail.";
+        if ($result['imported_without_date'] > 0) {
+            $message .= " {$result['imported_without_date']} lead(s) importada(s) sem Data.";
+        }
+
+        if ($result['imported_without_contact'] > 0) {
+            $message .= " {$result['imported_without_contact']} lead(s) importada(s) sem telefone/e-mail; reimportações podem gerar duplicatas.";
         }
 
         if ($result['unmatched_series'] !== []) {
             $examples = implode(', ', array_slice(array_keys($result['unmatched_series']), 0, 5));
             $message .= ' '.array_sum($result['unmatched_series']).' valor(es) da coluna Turma ficaram sem série correspondente (ex.: '.$examples.').';
+        }
+
+        if ($result['raw_value_warnings'] !== []) {
+            $message .= ' '.count($result['raw_value_warnings']).' valor(es) inválido(s) ou sem correspondência foram preservados nas observações e detalhados no relatório.';
         }
 
         $details = array_slice($result['failed_rows'], 0, 10);
@@ -94,9 +102,10 @@ class LegacyLeadImportController extends Controller
      *     appointments_updated: int,
      *     visits_created: int,
      *     visits_updated: int,
-     *     skipped_without_date: int,
-     *     skipped_without_contact: int,
+     *     imported_without_date: int,
+     *     imported_without_contact: int,
      *     failed_rows: list<string>,
+     *     raw_value_warnings: list<string>,
      *     unmatched_series: array<string, int>
      * }  $result
      */
@@ -117,10 +126,10 @@ class LegacyLeadImportController extends Controller
             '- Agendamentos atualizados: '.$result['appointments_updated'],
             '- Visitas criadas: '.$result['visits_created'],
             '- Visitas atualizadas: '.$result['visits_updated'],
-            '- Linhas sem Data ignoradas: '.$result['skipped_without_date'],
-            '- Linhas sem telefone/e-mail ignoradas: '.$result['skipped_without_contact'],
+            '- Leads importadas sem Data: '.$result['imported_without_date'],
+            '- Leads importadas sem telefone/e-mail: '.$result['imported_without_contact'],
             '',
-            '## Linhas com falha',
+            '## Linhas que precisam de revisão',
             '',
         ];
 
@@ -129,6 +138,19 @@ class LegacyLeadImportController extends Controller
         } else {
             foreach ($result['failed_rows'] as $failedRow) {
                 $lines[] = '- '.str_replace(["\r", "\n"], ' ', $failedRow);
+            }
+        }
+
+        if ($result['raw_value_warnings'] !== []) {
+            $lines = [
+                ...$lines,
+                '',
+                '## Valores inválidos ou sem correspondência preservados nas observações',
+                '',
+            ];
+
+            foreach ($result['raw_value_warnings'] as $warning) {
+                $lines[] = '- '.str_replace(["\r", "\n"], ' ', $warning);
             }
         }
 

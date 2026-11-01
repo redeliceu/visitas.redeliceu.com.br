@@ -112,7 +112,15 @@ class LeadAppointmentWorkflowTest extends TestCase
             ])
             ->assertRedirect(route('agendamentos.index'));
 
-        $appointment = Agendamento::query()->sole();
+        $this->actingAs($user)
+            ->post(route('leads.schedule', $lead), [
+                'data' => '2026-11-02',
+                'horario' => '10:30',
+            ])
+            ->assertRedirect(route('agendamentos.index'));
+
+        $this->assertDatabaseCount('agendamentos', 2);
+        $appointment = Agendamento::query()->latest('id')->firstOrFail();
         $this->assertSame($unit->id, $appointment->unidade_id);
         $this->assertSame($seller->id, $appointment->vendedor_id);
         $this->assertSame($lead->id, $appointment->lead_id);
@@ -375,6 +383,36 @@ class LeadAppointmentWorkflowTest extends TestCase
 
         $this->assertSame($previousStatus->id, $lead->fresh()->status_id);
         $this->assertDatabaseMissing('agendamentos', ['id' => $appointment->id]);
+    }
+
+    public function test_deleting_one_of_multiple_active_appointments_keeps_the_lead_scheduled(): void
+    {
+        $unit = Unidade::query()->create(['nome' => 'Unidade Norte']);
+        $user = User::factory()->create(['role' => User::ROLE_GESTOR]);
+        $user->unidades()->attach($unit);
+        $scheduledStatus = LeadStatus::query()->create(['nome' => 'Agendado']);
+        $lead = Lead::query()->create([
+            'unidade_id' => $unit->id,
+            'responsavel' => 'Família reagendada',
+            'status_id' => $scheduledStatus->id,
+        ]);
+        $appointments = collect(['2026-10-30', '2026-11-02'])->map(
+            fn (string $date): Agendamento => Agendamento::query()->create([
+                'unidade_id' => $unit->id,
+                'lead_id' => $lead->id,
+                'data' => $date,
+                'horario' => '11:00',
+                'responsavel' => 'Família reagendada',
+                'status' => 'Agendado',
+            ]),
+        );
+
+        $this->actingAs($user)
+            ->delete(route('agendamentos.destroy', $appointments->first()))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame($scheduledStatus->id, $lead->fresh()->status_id);
+        $this->assertDatabaseCount('agendamentos', 1);
     }
 
     private function createAppointment(Unidade $unit): Agendamento

@@ -38,6 +38,7 @@ type Appointment = {
     telefone: string | null;
     aluno: string | null;
     observacoes: string | null;
+    fonte: string;
 };
 type Visit = {
     id: number;
@@ -57,6 +58,7 @@ type Lead = FilterableRecord & {
     vendedor?: { id: number; nome: string } | null;
     serie?: { id: number; nome: string } | null;
     agendamento?: Appointment | null;
+    agendamentos: Appointment[];
     visitas: Visit[];
     status: { id: number; nome: string } | null;
     status_id: number | null;
@@ -422,7 +424,8 @@ export default function Leads({
                                                         />
                                                         <span>Editar</span>
                                                     </button>
-                                                    {lead.agendamento ? (
+                                                    {lead.agendamentos.length >
+                                                        0 && (
                                                         <a
                                                             className="es-lead-action"
                                                             href="/agendamentos"
@@ -436,25 +439,22 @@ export default function Leads({
                                                                 Agendamentos
                                                             </span>
                                                         </a>
-                                                    ) : (
-                                                        <button
-                                                            aria-label="Agendar lead"
-                                                            className="es-lead-action es-lead-action-primary"
-                                                            onClick={() =>
-                                                                openSchedule(
-                                                                    lead,
-                                                                )
-                                                            }
-                                                            title="Agendar lead"
-                                                            type="button"
-                                                        >
-                                                            <i
-                                                                className="fas fa-calendar-plus"
-                                                                aria-hidden="true"
-                                                            />
-                                                            <span>Agendar</span>
-                                                        </button>
                                                     )}
+                                                    <button
+                                                        aria-label="Agendar lead"
+                                                        className="es-lead-action es-lead-action-primary"
+                                                        onClick={() =>
+                                                            openSchedule(lead)
+                                                        }
+                                                        title="Agendar lead"
+                                                        type="button"
+                                                    >
+                                                        <i
+                                                            className="fas fa-calendar-plus"
+                                                            aria-hidden="true"
+                                                        />
+                                                        <span>Agendar</span>
+                                                    </button>
                                                 </div>
                                             </td>
                                         </tr>
@@ -663,25 +663,30 @@ export default function Leads({
                             >
                                 <section>
                                     <h3>Agendamentos</h3>
-                                    {detailsLead.agendamento ? (
+                                    {detailsLead.agendamentos.length > 0 ? (
                                         <ul>
-                                            <li>
-                                                {dateLabel(
-                                                    detailsLead.agendamento
-                                                        .data,
-                                                )}{' '}
-                                                às{' '}
-                                                {detailsLead.agendamento.horario?.slice(
-                                                    0,
-                                                    5,
-                                                ) || '—'}
-                                                {' — '}
-                                                {detailsLead.agendamento.status}
-                                                {detailsLead.agendamento
-                                                    .observacoes
-                                                    ? ` — ${detailsLead.agendamento.observacoes}`
-                                                    : ''}
-                                            </li>
+                                            {detailsLead.agendamentos.map(
+                                                (appointment) => (
+                                                    <li key={appointment.id}>
+                                                        {dateLabel(
+                                                            appointment.data,
+                                                        )}
+                                                        {' às '}
+                                                        {appointment.horario?.slice(
+                                                            0,
+                                                            5,
+                                                        ) || '—'}
+                                                        {' — '}
+                                                        {appointment.status}
+                                                        {appointment.fonte
+                                                            ? ` (${appointment.fonte})`
+                                                            : ''}
+                                                        {appointment.observacoes
+                                                            ? ` — ${appointment.observacoes}`
+                                                            : ''}
+                                                    </li>
+                                                ),
+                                            )}
                                         </ul>
                                     ) : (
                                         <p>Nenhum agendamento registrado.</p>

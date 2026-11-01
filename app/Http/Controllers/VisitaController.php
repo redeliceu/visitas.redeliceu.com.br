@@ -156,23 +156,26 @@ class VisitaController extends Controller
         abort_unless($user instanceof User, 401);
         $this->unitAccess->ensureCanAccess($user, $visita->unidade_id);
         $data = $request->validate([
-            'turma_id' => ['required', 'integer', 'exists:turmas,id'],
+            'turma_id' => ['nullable', 'integer', 'exists:turmas,id'],
         ]);
 
         DB::transaction(function () use ($visita, $data, $user): void {
             $lockedVisit = Visita::query()->lockForUpdate()->findOrFail($visita->id);
-            $class = Turma::query()->lockForUpdate()->findOrFail((int) $data['turma_id']);
+            $class = null;
+            if ($data['turma_id'] !== null) {
+                $class = Turma::query()->lockForUpdate()->findOrFail((int) $data['turma_id']);
 
-            if ($class->unidade_id !== $lockedVisit->unidade_id) {
-                throw ValidationException::withMessages([
-                    'turma_id' => 'Selecione uma turma da mesma unidade da visita.',
-                ]);
-            }
+                if ($class->unidade_id !== $lockedVisit->unidade_id) {
+                    throw ValidationException::withMessages([
+                        'turma_id' => 'Selecione uma turma da mesma unidade da visita.',
+                    ]);
+                }
 
-            if ($class->matriculas()->where('status', 'Ativa')->count() >= $class->capacidade) {
-                throw ValidationException::withMessages([
-                    'turma_id' => 'Esta turma não possui vagas disponíveis.',
-                ]);
+                if ($class->matriculas()->where('status', 'Ativa')->count() >= $class->capacidade) {
+                    throw ValidationException::withMessages([
+                        'turma_id' => 'Esta turma não possui vagas disponíveis.',
+                    ]);
+                }
             }
 
             if ($lockedVisit->matriculaAtiva()->exists()) {
@@ -190,7 +193,7 @@ class VisitaController extends Controller
                 $oldStatus = $previousEnrollment->status;
                 $oldClassId = $previousEnrollment->turma_id;
                 $previousEnrollment->update([
-                    'turma_id' => $class->id,
+                    'turma_id' => $class?->id,
                     'data' => now(),
                     'status' => 'Ativa',
                 ]);
@@ -201,7 +204,7 @@ class VisitaController extends Controller
                     'unidade_id' => $lockedVisit->unidade_id,
                     'lead_id' => $lockedVisit->lead_id,
                     'visita_id' => $lockedVisit->id,
-                    'turma_id' => $class->id,
+                    'turma_id' => $class?->id,
                     'data' => now(),
                     'status' => 'Ativa',
                 ]);
@@ -214,7 +217,7 @@ class VisitaController extends Controller
                 'matricula_id' => $enrollment->id,
                 'user_id' => $user->id,
                 'turma_anterior_id' => $oldClassId,
-                'turma_id' => $class->id,
+                'turma_id' => $class?->id,
                 'acao' => $action,
                 'status_anterior' => $oldStatus,
                 'status' => 'Ativa',
@@ -225,6 +228,63 @@ class VisitaController extends Controller
         });
 
         return back()->with('success', 'Matrícula efetivada.');
+    }
+
+    public function assignClass(Request $request, Visita $visita): RedirectResponse
+    {
+        $user = $request->user();
+        abort_unless($user instanceof User, 401);
+        $this->unitAccess->ensureCanAccess($user, $visita->unidade_id);
+        $data = $request->validate([
+            'turma_id' => ['required', 'integer', 'exists:turmas,id'],
+        ]);
+
+        DB::transaction(function () use ($visita, $data, $user): void {
+            $lockedVisit = Visita::query()->lockForUpdate()->findOrFail($visita->id);
+            $enrollment = $lockedVisit->matriculas()
+                ->where('status', 'Ativa')
+                ->lockForUpdate()
+                ->first();
+
+            if (! $enrollment) {
+                throw ValidationException::withMessages([
+                    'matricula' => 'Não há matrícula ativa para definir uma turma.',
+                ]);
+            }
+
+            if ($enrollment->turma_id !== null) {
+                throw ValidationException::withMessages([
+                    'turma_id' => 'Esta matrícula já possui uma turma definida.',
+                ]);
+            }
+
+            $class = Turma::query()->lockForUpdate()->findOrFail((int) $data['turma_id']);
+
+            if ($class->unidade_id !== $lockedVisit->unidade_id) {
+                throw ValidationException::withMessages([
+                    'turma_id' => 'Selecione uma turma da mesma unidade da visita.',
+                ]);
+            }
+
+            if ($class->matriculas()->where('status', 'Ativa')->count() >= $class->capacidade) {
+                throw ValidationException::withMessages([
+                    'turma_id' => 'Esta turma não possui vagas disponíveis.',
+                ]);
+            }
+
+            $enrollment->update(['turma_id' => $class->id]);
+            MatriculaAudit::query()->create([
+                'matricula_id' => $enrollment->id,
+                'user_id' => $user->id,
+                'turma_anterior_id' => null,
+                'turma_id' => $class->id,
+                'acao' => 'Turma definida',
+                'status_anterior' => 'Ativa',
+                'status' => 'Ativa',
+            ]);
+        });
+
+        return back()->with('success', 'Turma definida para a matrícula.');
     }
 
     public function cancelEnrollment(Request $request, Visita $visita): RedirectResponse

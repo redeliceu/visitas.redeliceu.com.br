@@ -20,6 +20,7 @@ class Agendamento extends Model
         'aluno',
         'observacoes',
         'status',
+        'fonte',
     ];
 
     protected function casts(): array

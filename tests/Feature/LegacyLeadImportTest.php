@@ -90,6 +90,7 @@ class LegacyLeadImportTest extends TestCase
         $appointment = Agendamento::query()->sole();
         $this->assertSame('12:00:00', $appointment->horario);
         $this->assertSame('Compareceu', $appointment->status);
+        $this->assertSame('Importação histórica', $appointment->fonte);
 
         $visit = Visita::query()->sole();
         $this->assertSame('Em Atendimento', $visit->status);
@@ -134,12 +135,18 @@ class LegacyLeadImportTest extends TestCase
         $this->assertSame('Primeiro contato', $lead->observacoes);
         $this->assertSame($status->id, $lead->status_id);
         $this->assertSame($series->id, $lead->serie_id);
+        $history = $lead->editHistories()->sole();
+        $this->assertContains([
+            'field' => 'Data do contato',
+            'old' => '2024-01-02 00:00:00',
+            'new' => '2024-02-02 00:00:00',
+        ], $history->changes);
         $this->assertDatabaseCount('vendedores', 1);
         $this->assertDatabaseCount('agendamentos', 1);
         $this->assertDatabaseCount('visitas', 1);
     }
 
-    public function test_master_creates_missing_sellers_and_skips_rows_without_identity_or_date(): void
+    public function test_master_imports_rows_without_identity_or_date_and_reports_unmapped_values(): void
     {
         $unit = Unidade::query()->create(['nome' => 'Unidade Leste']);
         $master = User::factory()->create(['role' => User::ROLE_MASTER]);
@@ -179,17 +186,21 @@ class LegacyLeadImportTest extends TestCase
             ])
             ->assertRedirect(route('admin.legacy-import.index'))
             ->assertSessionHas('success', fn (mixed $message): bool => is_string($message)
-                && str_contains($message, '1 vendedor(es) criado(s)')
-                && str_contains($message, '2 linha(s) ignorada(s)')
-                && str_contains($message, 'ficaram sem série correspondente'));
+                && str_contains($message, '3 lead(s) criada(s)')
+                && str_contains($message, '1 lead(s) importada(s) sem Data')
+                && str_contains($message, '2 lead(s) importada(s) sem telefone/e-mail')
+                && str_contains($message, 'ficaram sem série correspondente')
+                && str_contains($message, 'preservados nas observações'));
 
-        $this->assertDatabaseCount('leads', 1);
-        $lead = Lead::query()->sole();
+        $this->assertDatabaseCount('leads', 3);
+        $lead = Lead::query()->where('telefone', '11988887777')->sole();
         $this->assertNull($lead->idade);
         $this->assertNull($lead->serie_id);
         $this->assertStringContainsString('8 ano', $lead->observacoes);
         $this->assertStringContainsString('aguardando retorno', $lead->observacoes);
         $this->assertStringContainsString('Comentário da planilha', $lead->observacoes);
+        $this->assertSame(1, Lead::query()->whereNull('data')->count());
+        $this->assertSame(2, Lead::query()->whereNull('telefone')->whereNull('telefone_secundario')->whereNull('email')->count());
         $this->assertDatabaseHas('vendedores', [
             'unidade_id' => $unit->id,
             'nome' => 'Vendedor Novo',
@@ -239,7 +250,7 @@ class LegacyLeadImportTest extends TestCase
         $this->assertSame('2020-10-30 00:00:00', $lead->getRawOriginal('created_at'));
     }
 
-    public function test_invalid_rows_are_skipped_while_valid_rows_import_and_failures_are_reported(): void
+    public function test_invalid_dates_and_unmapped_catalog_values_are_preserved_without_rejecting_leads(): void
     {
         $unit = Unidade::query()->create(['nome' => 'Unidade Centro']);
         $master = User::factory()->create(['role' => User::ROLE_MASTER]);
@@ -258,21 +269,147 @@ class LegacyLeadImportTest extends TestCase
                 ]),
             ])
             ->assertRedirect(route('admin.legacy-import.index'))
-            ->assertSessionHas('warning', fn (string $warning): bool => str_contains($warning, 'Linha 2:')
-                && str_contains($warning, '30/10/0202')
-                && str_contains($warning, 'Linha 3:')
-                && str_contains($warning, 'Ciclo desconhecido'))
+            ->assertSessionHas('success', fn (string $message): bool => str_contains(
+                $message,
+                'valor(es) inválido(s) ou sem correspondência foram preservados',
+            ))
             ->assertSessionHas('import_report', fn (array $report): bool => str_contains(
                 $report['markdown'],
-                '- Linha 2: Data "30/10/0202"',
+                'Data: "30/10/202"',
             ) && str_contains(
                 $report['markdown'],
-                '- Linha 3: ciclo "Ciclo desconhecido"',
+                'Ciclo: "Ciclo desconhecido"',
             ));
 
         $this->assertDatabaseCount('leads', 1);
         $lead = Lead::query()->sole();
         $this->assertSame('2024-01-02 00:00:00', $lead->getRawOriginal('data'));
+        $this->assertStringContainsString('Data (valor original): 30/10/202', $lead->observacoes);
+        $this->assertStringContainsString('Ciclo (valor original): Ciclo desconhecido', $lead->observacoes);
+    }
+
+    public function test_contact_only_matching_updates_a_lead_when_the_student_name_is_missing(): void
+    {
+        $unit = Unidade::query()->create(['nome' => 'Unidade Centro']);
+        $master = User::factory()->create(['role' => User::ROLE_MASTER]);
+        $lead = Lead::query()->create([
+            'unidade_id' => $unit->id,
+            'responsavel' => 'Maria de Souza',
+            'telefone' => '11988887777',
+            'aluno' => null,
+            'data' => '2024-01-02',
+        ]);
+        $row = $this->leadRow([
+            'Nome do Aluno' => '',
+            'Data' => '2024-03-04',
+            'Data Agendamento' => '',
+            'Data Visita' => '',
+        ]);
+
+        $this->actingAs($master)
+            ->from(route('admin.legacy-import.index'))
+            ->post(route('admin.legacy-import.store'), [
+                'unidade_id' => $unit->id,
+                'arquivo' => $this->workbook([$row]),
+            ])
+            ->assertRedirect(route('admin.legacy-import.index'))
+            ->assertSessionHas('success', fn (string $message): bool => str_contains(
+                $message,
+                '0 lead(s) criada(s), 1 atualizada(s)',
+            ));
+
+        $this->assertDatabaseCount('leads', 1);
+        $this->assertSame('2024-03-04 00:00:00', $lead->fresh()->getRawOriginal('data'));
+    }
+
+    public function test_ambiguous_contact_only_match_is_reported_without_updating_or_creating_a_lead(): void
+    {
+        $unit = Unidade::query()->create(['nome' => 'Unidade Centro']);
+        $master = User::factory()->create(['role' => User::ROLE_MASTER]);
+        foreach (['Maria', 'Ana'] as $name) {
+            Lead::query()->create([
+                'unidade_id' => $unit->id,
+                'responsavel' => $name,
+                'telefone' => '11988887777',
+                'aluno' => null,
+                'data' => '2024-01-02',
+            ]);
+        }
+
+        $row = $this->leadRow([
+            'Nome do Aluno' => '',
+            'Data' => '2024-03-04',
+            'Data Agendamento' => '',
+            'Data Visita' => '',
+        ]);
+
+        $this->actingAs($master)
+            ->from(route('admin.legacy-import.index'))
+            ->post(route('admin.legacy-import.store'), [
+                'unidade_id' => $unit->id,
+                'arquivo' => $this->workbook([$row]),
+            ])
+            ->assertRedirect(route('admin.legacy-import.index'))
+            ->assertSessionHas('warning', fn (string $message): bool => str_contains(
+                $message,
+                'corresponde a mais de uma lead',
+            ));
+
+        $this->assertDatabaseCount('leads', 2);
+        $this->assertSame(2, Lead::query()->whereDate('data', '2024-01-02')->count());
+    }
+
+    public function test_reimporting_multiple_appointments_preserves_manual_history_and_is_idempotent(): void
+    {
+        $unit = Unidade::query()->create(['nome' => 'Unidade Centro']);
+        $master = User::factory()->create(['role' => User::ROLE_MASTER]);
+        LeadStatus::query()->create(['nome' => 'Atendendo']);
+        Ciclo::query()->create(['nome' => 'Educação Infantil']);
+        Turno::query()->create(['nome' => 'Manhã']);
+
+        $this->actingAs($master)
+            ->post(route('admin.legacy-import.store'), [
+                'unidade_id' => $unit->id,
+                'arquivo' => $this->workbook([$this->leadRow()]),
+            ])
+            ->assertSessionHas('success');
+
+        $lead = Lead::query()->sole();
+        Agendamento::query()->create([
+            'unidade_id' => $unit->id,
+            'lead_id' => $lead->id,
+            'data' => '2024-01-10',
+            'horario' => '10:00',
+            'responsavel' => 'Agendamento manual',
+            'status' => 'Agendado',
+        ]);
+        $updatedRow = $this->leadRow([
+            'Data Agendamento' => '2024-01-06',
+            'Hora Agendada' => '14:30',
+            'Data Visita' => '2024-01-06',
+            'Hora Visita' => '15:00',
+        ]);
+
+        foreach ([1, 2] as $_) {
+            $this->actingAs($master)
+                ->post(route('admin.legacy-import.store'), [
+                    'unidade_id' => $unit->id,
+                    'arquivo' => $this->workbook([$updatedRow]),
+                ])
+                ->assertSessionHas('success');
+        }
+
+        $this->assertDatabaseCount('agendamentos', 3);
+        $this->assertDatabaseCount('visitas', 2);
+        $this->assertSame(2, Agendamento::query()
+            ->where('lead_id', $lead->id)
+            ->where('fonte', 'Importação histórica')
+            ->count());
+        $this->assertDatabaseHas('agendamentos', [
+            'lead_id' => $lead->id,
+            'fonte' => 'Manual',
+            'responsavel' => 'Agendamento manual',
+        ]);
     }
 
     public function test_only_master_can_open_or_submit_the_historical_import(): void

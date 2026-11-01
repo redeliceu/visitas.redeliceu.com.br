@@ -20,7 +20,7 @@ type ClassRoom = {
 };
 type Enrollment = {
     id: number;
-    turma_id: number;
+    turma_id: number | null;
     status: string;
     turma?: { id: number; nome: string; periodo: string } | null;
 };
@@ -110,6 +110,7 @@ export default function Visits({
     const [editing, setEditing] = useState<Visit | null>(null);
     const [statusVisit, setStatusVisit] = useState<Visit | null>(null);
     const [enrollmentVisit, setEnrollmentVisit] = useState<Visit | null>(null);
+    const [assigningClass, setAssigningClass] = useState(false);
     const [modalOpen, setModalOpen] = useState(false);
     const form = useForm<VisitData>(emptyVisit(selectedUnitId, units));
     const statusForm = useForm<StatusData>({
@@ -189,6 +190,14 @@ export default function Visits({
     }
 
     function openEnrollment(visit: Visit) {
+        setAssigningClass(false);
+        setEnrollmentVisit(visit);
+        enrollmentForm.clearErrors();
+        enrollmentForm.setData('turma_id', '');
+    }
+
+    function openClassAssignment(visit: Visit) {
+        setAssigningClass(true);
         setEnrollmentVisit(visit);
         enrollmentForm.clearErrors();
         enrollmentForm.setData('turma_id', '');
@@ -201,10 +210,25 @@ export default function Visits({
             return;
         }
 
-        enrollmentForm.post(`/visitas/${enrollmentVisit.id}/matriculas`, {
+        const options = {
             preserveScroll: true,
-            onSuccess: () => setEnrollmentVisit(null),
-        });
+            onSuccess: () => {
+                setEnrollmentVisit(null);
+                setAssigningClass(false);
+            },
+        };
+
+        if (assigningClass) {
+            enrollmentForm.patch(
+                `/visitas/${enrollmentVisit.id}/matriculas/turma`,
+                options,
+            );
+        } else {
+            enrollmentForm.post(
+                `/visitas/${enrollmentVisit.id}/matriculas`,
+                options,
+            );
+        }
     }
 
     function cancelEnrollment(visit: Visit) {
@@ -306,9 +330,11 @@ export default function Visits({
                                         <td>
                                             {visit.matricula_ativa?.turma
                                                 ? `${visit.matricula_ativa.turma.nome} · ${visit.matricula_ativa.turma.periodo}`
-                                                : visit.matriculas.length > 0
-                                                  ? 'Cancelada'
-                                                  : '—'}
+                                                : visit.matricula_ativa
+                                                  ? 'Matrícula ativa · Turma a definir'
+                                                  : visit.matriculas.length > 0
+                                                    ? 'Cancelada'
+                                                    : '—'}
                                         </td>
                                         <td>
                                             <button
@@ -323,6 +349,28 @@ export default function Visits({
                                                     aria-hidden="true"
                                                 />
                                             </button>{' '}
+                                            {visit.matricula_ativa &&
+                                                !visit.matricula_ativa
+                                                    .turma_id && (
+                                                    <>
+                                                        <button
+                                                            aria-label="Definir turma da matrícula"
+                                                            className="btn btn-secondary es-icon-action"
+                                                            onClick={() =>
+                                                                openClassAssignment(
+                                                                    visit,
+                                                                )
+                                                            }
+                                                            title="Definir turma"
+                                                            type="button"
+                                                        >
+                                                            <i
+                                                                className="fas fa-school"
+                                                                aria-hidden="true"
+                                                            />
+                                                        </button>{' '}
+                                                    </>
+                                                )}
                                             <button
                                                 aria-label="Alterar status"
                                                 className="btn btn-secondary es-icon-action"
@@ -646,13 +694,31 @@ export default function Visits({
             )}
             {enrollmentVisit && (
                 <RecordModal
-                    onClose={() => setEnrollmentVisit(null)}
+                    onClose={() => {
+                        setEnrollmentVisit(null);
+                        setAssigningClass(false);
+                    }}
                     onSubmit={submitEnrollment}
                     processing={enrollmentForm.processing}
-                    title={`Efetivar matrícula — ${enrollmentVisit.responsavel}`}
-                    submitLabel="Efetivar matrícula"
+                    title={
+                        assigningClass
+                            ? `Definir turma — ${enrollmentVisit.responsavel}`
+                            : `Efetivar matrícula — ${enrollmentVisit.responsavel}`
+                    }
+                    submitLabel={
+                        assigningClass ? 'Definir turma' : 'Efetivar matrícula'
+                    }
                 >
-                    <Field error={enrollmentForm.errors.turma_id} label="Turma">
+                    {!assigningClass && (
+                        <p>
+                            A matrícula pode ser registrada sem turma. Você
+                            poderá definir a turma depois.
+                        </p>
+                    )}
+                    <Field
+                        error={enrollmentForm.errors.turma_id}
+                        label={assigningClass ? 'Turma' : 'Turma (opcional)'}
+                    >
                         <select
                             onChange={(event) =>
                                 enrollmentForm.setData(
@@ -660,10 +726,14 @@ export default function Visits({
                                     event.target.value,
                                 )
                             }
-                            required
+                            required={assigningClass}
                             value={enrollmentForm.data.turma_id}
                         >
-                            <option value="">Selecione uma turma</option>
+                            <option value="">
+                                {assigningClass
+                                    ? 'Selecione uma turma'
+                                    : 'Definir futuramente'}
+                            </option>
                             {classes
                                 .filter(
                                     (classRoom) =>
@@ -685,17 +755,19 @@ export default function Visits({
                                 ))}
                         </select>
                     </Field>
-                    {classes.filter(
-                        (classRoom) =>
-                            classRoom.unidade_id ===
-                                enrollmentVisit.unidade_id &&
-                            classRoom.active_matriculas_count <
-                                classRoom.capacidade,
-                    ).length === 0 && (
-                        <p className="field-error">
-                            Não há turmas com vagas disponíveis nesta unidade.
-                        </p>
-                    )}
+                    {assigningClass &&
+                        classes.filter(
+                            (classRoom) =>
+                                classRoom.unidade_id ===
+                                    enrollmentVisit.unidade_id &&
+                                classRoom.active_matriculas_count <
+                                    classRoom.capacidade,
+                        ).length === 0 && (
+                            <p className="field-error">
+                                Não há turmas com vagas disponíveis nesta
+                                unidade.
+                            </p>
+                        )}
                 </RecordModal>
             )}
         </VisitLayout>

@@ -100,7 +100,14 @@ class AgendamentoController extends Controller
                     ->where('nome', 'Agendado')
                     ->value('id');
 
-                if ($lead && $lead->status_id === $scheduledStatusId) {
+                if (
+                    $lead
+                    && $lead->status_id === $scheduledStatusId
+                    && ! $lead->agendamentos()
+                        ->whereKeyNot($lockedAppointment->id)
+                        ->where('status', 'Agendado')
+                        ->exists()
+                ) {
                     $lead->update([
                         'status_id' => $lockedAppointment->lead_status_anterior_id,
                     ]);
