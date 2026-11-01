@@ -465,6 +465,7 @@ export default function Visits({
             </ListFilters>
             {modalOpen && (
                 <RecordModal
+                    className="es-visit-detail-modal"
                     onClose={closeVisitModal}
                     onSubmit={submitVisit}
                     processing={form.processing}
@@ -588,14 +589,23 @@ export default function Visits({
                             value={form.data.instituicao}
                         />
                     </Field>
-                    <Field error={form.errors.observacoes} label="Observações">
-                        <textarea
-                            onChange={(event) =>
-                                form.setData('observacoes', event.target.value)
-                            }
-                            value={form.data.observacoes}
-                        />
-                    </Field>
+                    <div className="es-visit-observations">
+                        <Field
+                            error={form.errors.observacoes}
+                            label="Observações"
+                        >
+                            <textarea
+                                onChange={(event) =>
+                                    form.setData(
+                                        'observacoes',
+                                        event.target.value,
+                                    )
+                                }
+                                rows={9}
+                                value={form.data.observacoes}
+                            />
+                        </Field>
+                    </div>
                 </RecordModal>
             )}
             {statusVisit && (

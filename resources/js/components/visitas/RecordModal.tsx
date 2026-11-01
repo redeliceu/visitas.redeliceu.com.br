@@ -7,6 +7,7 @@ type Props = {
     processing: boolean;
     submitLabel?: string;
     hideActions?: boolean;
+    className?: string;
     children: ReactNode;
 };
 
@@ -35,6 +36,7 @@ export default function RecordModal({
     processing,
     submitLabel = 'Salvar',
     hideActions = false,
+    className,
     children,
 }: Props) {
     return (
@@ -49,7 +51,7 @@ export default function RecordModal({
             <section
                 aria-labelledby="modal-title"
                 aria-modal="true"
-                className="es-modal-card"
+                className={`es-modal-card ${className ?? ''}`.trim()}
                 role="dialog"
             >
                 <div className="es-modal-head">

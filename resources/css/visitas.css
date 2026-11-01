@@ -222,9 +222,31 @@
     display: block;
 }
 
+.es-modal-card.es-visit-detail-modal {
+    width: min(1040px, 96vw);
+    max-height: 94vh;
+}
+
+.es-visit-observations {
+    grid-column: 1 / -1;
+}
+
+.es-visit-observations textarea {
+    min-height: 220px;
+    line-height: 1.55;
+    resize: vertical;
+    white-space: pre-wrap;
+}
+
 .es-lead-detail {
     display: grid;
     gap: 18px;
+}
+
+.es-lead-edit-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 13px;
 }
 
 .es-lead-tabs {
@@ -304,7 +326,16 @@
 }
 
 @media (max-width: 640px) {
+    .es-modal-card.es-visit-detail-modal {
+        width: 100%;
+        max-height: 96dvh;
+    }
+
     .es-lead-detail dl {
+        grid-template-columns: 1fr;
+    }
+
+    .es-lead-edit-fields {
         grid-template-columns: 1fr;
     }
 }

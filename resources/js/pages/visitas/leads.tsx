@@ -115,6 +115,7 @@ type Props = {
 };
 
 type DetailsTab = 'dados' | 'atendimentos' | 'historico';
+type LeadEditTab = 'contato' | 'aluno' | 'funil';
 
 const emptyLead: LeadData = {
     unidade_id: '',
@@ -162,6 +163,7 @@ export default function Leads({
 }: Props) {
     const [editing, setEditing] = useState<Lead | null>(null);
     const [leadModalOpen, setLeadModalOpen] = useState(false);
+    const [leadEditTab, setLeadEditTab] = useState<LeadEditTab>('contato');
     const [detailsLead, setDetailsLead] = useState<Lead | null>(null);
     const [detailsTab, setDetailsTab] = useState<DetailsTab>('dados');
     const [scheduling, setScheduling] = useState<Lead | null>(null);
@@ -191,6 +193,7 @@ export default function Leads({
 
     function openLead(lead: Lead | null = null) {
         setEditing(lead);
+        setLeadEditTab('contato');
         setLeadModalOpen(true);
         leadForm.clearErrors();
         leadForm.setData(
@@ -242,7 +245,41 @@ export default function Leads({
 
     function submitLead(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        const options = { onSuccess: closeLead };
+        const options = {
+            onSuccess: closeLead,
+            onError: (errors: Record<string, string>) => {
+                const errorFields = Object.keys(errors);
+                const studentFields = [
+                    'aluno',
+                    'idade',
+                    'nascimento',
+                    'serie_id',
+                    'ciclo_id',
+                    'turno_id',
+                    'canal_mkt',
+                    'canal_contato',
+                ];
+                const funnelFields = [
+                    'status_id',
+                    'retorno_data',
+                    'data_matricula',
+                    'desconto',
+                    'observacoes',
+                ];
+
+                if (
+                    errorFields.some((field) => studentFields.includes(field))
+                ) {
+                    setLeadEditTab('aluno');
+                } else if (
+                    errorFields.some((field) => funnelFields.includes(field))
+                ) {
+                    setLeadEditTab('funil');
+                } else {
+                    setLeadEditTab('contato');
+                }
+            },
+        };
 
         if (editing) {
             leadForm.put(`/leads/${editing.id}`, options);
@@ -843,294 +880,452 @@ export default function Leads({
                     processing={leadForm.processing}
                     title={editing ? 'Editar lead' : 'Novo lead'}
                 >
-                    <Field error={leadForm.errors.unidade_id} label="Unidade">
-                        <select
-                            onChange={(event) => {
-                                const nextUnitId = event.target.value;
-                                const ownSeller = sellers.find(
-                                    (seller) =>
-                                        seller.is_current_user &&
-                                        String(seller.unidade_id) ===
-                                            nextUnitId,
-                                );
-                                leadForm.setData((current) => ({
-                                    ...current,
-                                    unidade_id: nextUnitId,
-                                    vendedor_id: ownSeller
-                                        ? String(ownSeller.id)
-                                        : '',
-                                }));
-                            }}
-                            value={leadForm.data.unidade_id}
+                    <div className="es-lead-detail">
+                        <div
+                            aria-label="Seções do formulário da lead"
+                            className="es-lead-tabs"
+                            role="tablist"
                         >
-                            {units.map((unit) => (
-                                <option key={unit.id} value={unit.id}>
-                                    {unit.nome}
-                                </option>
-                            ))}
-                        </select>
-                    </Field>
-                    <Field error={leadForm.errors.vendedor_id} label="Vendedor">
-                        <select
-                            onChange={(event) =>
-                                leadForm.setData(
-                                    'vendedor_id',
-                                    event.target.value,
-                                )
-                            }
-                            value={leadForm.data.vendedor_id}
-                        >
-                            <option value="">Não atribuído</option>
-                            {sellers
-                                .filter(
-                                    (seller) =>
-                                        String(seller.unidade_id) ===
-                                        leadForm.data.unidade_id,
-                                )
-                                .map((seller) => (
-                                    <option key={seller.id} value={seller.id}>
-                                        {seller.nome}
-                                    </option>
-                                ))}
-                        </select>
-                    </Field>
-                    <Field error={leadForm.errors.data} label="Data do contato">
-                        <input
-                            onChange={(event) =>
-                                leadForm.setData('data', event.target.value)
-                            }
-                            type="date"
-                            value={leadForm.data.data}
-                        />
-                    </Field>
-                    <Field
-                        error={leadForm.errors.responsavel}
-                        label="Responsável *"
-                    >
-                        <input
-                            onChange={(event) =>
-                                leadForm.setData(
-                                    'responsavel',
-                                    event.target.value,
-                                )
-                            }
-                            required
-                            value={leadForm.data.responsavel}
-                        />
-                    </Field>
-                    <Field error={leadForm.errors.telefone} label="Telefone">
-                        <input
-                            onChange={(event) =>
-                                leadForm.setData('telefone', event.target.value)
-                            }
-                            value={leadForm.data.telefone}
-                        />
-                    </Field>
-                    <Field
-                        error={leadForm.errors.telefone_secundario}
-                        label="Telefone secundário"
-                    >
-                        <input
-                            onChange={(event) =>
-                                leadForm.setData(
-                                    'telefone_secundario',
-                                    event.target.value,
-                                )
-                            }
-                            value={leadForm.data.telefone_secundario}
-                        />
-                    </Field>
-                    <Field error={leadForm.errors.email} label="E-mail">
-                        <input
-                            onChange={(event) =>
-                                leadForm.setData('email', event.target.value)
-                            }
-                            type="email"
-                            value={leadForm.data.email}
-                        />
-                    </Field>
-                    <Field error={leadForm.errors.aluno} label="Aluno">
-                        <input
-                            onChange={(event) =>
-                                leadForm.setData('aluno', event.target.value)
-                            }
-                            value={leadForm.data.aluno}
-                        />
-                    </Field>
-                    <Field error={leadForm.errors.idade} label="Idade">
-                        <input
-                            min="0"
-                            max="120"
-                            onChange={(event) =>
-                                leadForm.setData('idade', event.target.value)
-                            }
-                            type="number"
-                            value={leadForm.data.idade}
-                        />
-                    </Field>
-                    <Field
-                        error={leadForm.errors.nascimento}
-                        label="Data de nascimento"
-                    >
-                        <input
-                            onChange={(event) =>
-                                leadForm.setData(
-                                    'nascimento',
-                                    event.target.value,
-                                )
-                            }
-                            type="date"
-                            value={leadForm.data.nascimento}
-                        />
-                    </Field>
-                    <Field error={leadForm.errors.serie_id} label="Série">
-                        <select
-                            onChange={(event) =>
-                                leadForm.setData('serie_id', event.target.value)
-                            }
-                            value={leadForm.data.serie_id}
-                        >
-                            <option value="">Selecione</option>
-                            {series.map((serie) => (
-                                <option key={serie.id} value={serie.id}>
-                                    {serie.nome}
-                                </option>
-                            ))}
-                        </select>
-                    </Field>
-                    <Field error={leadForm.errors.ciclo_id} label="Ciclo">
-                        <select
-                            onChange={(event) =>
-                                leadForm.setData('ciclo_id', event.target.value)
-                            }
-                            value={leadForm.data.ciclo_id}
-                        >
-                            <option value="">Selecione</option>
-                            {cycles.map((cycle) => (
-                                <option key={cycle.id} value={cycle.id}>
-                                    {cycle.nome}
-                                </option>
-                            ))}
-                        </select>
-                    </Field>
-                    <Field error={leadForm.errors.turno_id} label="Turno">
-                        <select
-                            onChange={(event) =>
-                                leadForm.setData('turno_id', event.target.value)
-                            }
-                            value={leadForm.data.turno_id}
-                        >
-                            <option value="">Selecione</option>
-                            {shifts.map((shift) => (
-                                <option key={shift.id} value={shift.id}>
-                                    {shift.nome}
-                                </option>
-                            ))}
-                        </select>
-                    </Field>
-                    <Field
-                        error={leadForm.errors.canal_mkt}
-                        label="Canal de marketing"
-                    >
-                        <input
-                            onChange={(event) =>
-                                leadForm.setData(
-                                    'canal_mkt',
-                                    event.target.value,
-                                )
-                            }
-                            value={leadForm.data.canal_mkt}
-                        />
-                    </Field>
-                    <Field
-                        error={leadForm.errors.canal_contato}
-                        label="Canal de contato"
-                    >
-                        <input
-                            onChange={(event) =>
-                                leadForm.setData(
-                                    'canal_contato',
-                                    event.target.value,
-                                )
-                            }
-                            value={leadForm.data.canal_contato}
-                        />
-                    </Field>
-                    <Field error={leadForm.errors.status_id} label="Status">
-                        <select
-                            onChange={(event) =>
-                                leadForm.setData(
-                                    'status_id',
-                                    event.target.value,
-                                )
-                            }
-                            value={leadForm.data.status_id}
-                        >
-                            {statuses.map((status) => (
-                                <option key={status.id} value={status.id}>
-                                    {status.nome}
-                                </option>
-                            ))}
-                        </select>
-                    </Field>
-                    <Field
-                        error={leadForm.errors.retorno_data}
-                        label="Data de retorno"
-                    >
-                        <input
-                            onChange={(event) =>
-                                leadForm.setData(
-                                    'retorno_data',
-                                    event.target.value,
-                                )
-                            }
-                            type="date"
-                            value={leadForm.data.retorno_data}
-                        />
-                    </Field>
-                    <Field
-                        error={leadForm.errors.data_matricula}
-                        label="Data de matrícula"
-                    >
-                        <input
-                            onChange={(event) =>
-                                leadForm.setData(
-                                    'data_matricula',
-                                    event.target.value,
-                                )
-                            }
-                            type="date"
-                            value={leadForm.data.data_matricula}
-                        />
-                    </Field>
-                    <Field
-                        error={leadForm.errors.desconto}
-                        label="Desconto (%)"
-                    >
-                        <input
-                            max="100"
-                            min="0"
-                            onChange={(event) =>
-                                leadForm.setData('desconto', event.target.value)
-                            }
-                            type="number"
-                            value={leadForm.data.desconto}
-                        />
-                    </Field>
-                    <Field
-                        error={leadForm.errors.observacoes}
-                        label="Observações"
-                    >
-                        <textarea
-                            onChange={(event) =>
-                                leadForm.setData(
-                                    'observacoes',
-                                    event.target.value,
-                                )
-                            }
-                            value={leadForm.data.observacoes}
-                        />
-                    </Field>
+                            <button
+                                aria-controls="lead-edit-panel-contato"
+                                aria-selected={leadEditTab === 'contato'}
+                                className={
+                                    leadEditTab === 'contato' ? 'active' : ''
+                                }
+                                id="lead-edit-tab-contato"
+                                onClick={() => setLeadEditTab('contato')}
+                                role="tab"
+                                type="button"
+                            >
+                                Contato
+                            </button>
+                            <button
+                                aria-controls="lead-edit-panel-aluno"
+                                aria-selected={leadEditTab === 'aluno'}
+                                className={
+                                    leadEditTab === 'aluno' ? 'active' : ''
+                                }
+                                id="lead-edit-tab-aluno"
+                                onClick={() => setLeadEditTab('aluno')}
+                                role="tab"
+                                type="button"
+                            >
+                                Aluno e origem
+                            </button>
+                            <button
+                                aria-controls="lead-edit-panel-funil"
+                                aria-selected={leadEditTab === 'funil'}
+                                className={
+                                    leadEditTab === 'funil' ? 'active' : ''
+                                }
+                                id="lead-edit-tab-funil"
+                                onClick={() => setLeadEditTab('funil')}
+                                role="tab"
+                                type="button"
+                            >
+                                Funil e acompanhamento
+                            </button>
+                        </div>
+                        {leadEditTab === 'contato' && (
+                            <div
+                                aria-labelledby="lead-edit-tab-contato"
+                                className="es-lead-edit-fields"
+                                id="lead-edit-panel-contato"
+                                role="tabpanel"
+                            >
+                                <Field
+                                    error={leadForm.errors.unidade_id}
+                                    label="Unidade"
+                                >
+                                    <select
+                                        onChange={(event) => {
+                                            const nextUnitId =
+                                                event.target.value;
+                                            const ownSeller = sellers.find(
+                                                (seller) =>
+                                                    seller.is_current_user &&
+                                                    String(
+                                                        seller.unidade_id,
+                                                    ) === nextUnitId,
+                                            );
+                                            leadForm.setData((current) => ({
+                                                ...current,
+                                                unidade_id: nextUnitId,
+                                                vendedor_id: ownSeller
+                                                    ? String(ownSeller.id)
+                                                    : '',
+                                            }));
+                                        }}
+                                        value={leadForm.data.unidade_id}
+                                    >
+                                        {units.map((unit) => (
+                                            <option
+                                                key={unit.id}
+                                                value={unit.id}
+                                            >
+                                                {unit.nome}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </Field>
+                                <Field
+                                    error={leadForm.errors.vendedor_id}
+                                    label="Vendedor"
+                                >
+                                    <select
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'vendedor_id',
+                                                event.target.value,
+                                            )
+                                        }
+                                        value={leadForm.data.vendedor_id}
+                                    >
+                                        <option value="">Não atribuído</option>
+                                        {sellers
+                                            .filter(
+                                                (seller) =>
+                                                    String(
+                                                        seller.unidade_id,
+                                                    ) ===
+                                                    leadForm.data.unidade_id,
+                                            )
+                                            .map((seller) => (
+                                                <option
+                                                    key={seller.id}
+                                                    value={seller.id}
+                                                >
+                                                    {seller.nome}
+                                                </option>
+                                            ))}
+                                    </select>
+                                </Field>
+                                <Field
+                                    error={leadForm.errors.data}
+                                    label="Data do contato"
+                                >
+                                    <input
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'data',
+                                                event.target.value,
+                                            )
+                                        }
+                                        type="date"
+                                        value={leadForm.data.data}
+                                    />
+                                </Field>
+                                <Field
+                                    error={leadForm.errors.responsavel}
+                                    label="Responsável *"
+                                >
+                                    <input
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'responsavel',
+                                                event.target.value,
+                                            )
+                                        }
+                                        required
+                                        value={leadForm.data.responsavel}
+                                    />
+                                </Field>
+                                <Field
+                                    error={leadForm.errors.telefone}
+                                    label="Telefone"
+                                >
+                                    <input
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'telefone',
+                                                event.target.value,
+                                            )
+                                        }
+                                        value={leadForm.data.telefone}
+                                    />
+                                </Field>
+                                <Field
+                                    error={leadForm.errors.telefone_secundario}
+                                    label="Telefone secundário"
+                                >
+                                    <input
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'telefone_secundario',
+                                                event.target.value,
+                                            )
+                                        }
+                                        value={
+                                            leadForm.data.telefone_secundario
+                                        }
+                                    />
+                                </Field>
+                                <Field
+                                    error={leadForm.errors.email}
+                                    label="E-mail"
+                                >
+                                    <input
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'email',
+                                                event.target.value,
+                                            )
+                                        }
+                                        type="email"
+                                        value={leadForm.data.email}
+                                    />
+                                </Field>
+                            </div>
+                        )}
+                        {leadEditTab === 'aluno' && (
+                            <div
+                                aria-labelledby="lead-edit-tab-aluno"
+                                className="es-lead-edit-fields"
+                                id="lead-edit-panel-aluno"
+                                role="tabpanel"
+                            >
+                                <Field
+                                    error={leadForm.errors.aluno}
+                                    label="Aluno"
+                                >
+                                    <input
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'aluno',
+                                                event.target.value,
+                                            )
+                                        }
+                                        value={leadForm.data.aluno}
+                                    />
+                                </Field>
+                                <Field
+                                    error={leadForm.errors.idade}
+                                    label="Idade"
+                                >
+                                    <input
+                                        min="0"
+                                        max="120"
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'idade',
+                                                event.target.value,
+                                            )
+                                        }
+                                        type="number"
+                                        value={leadForm.data.idade}
+                                    />
+                                </Field>
+                                <Field
+                                    error={leadForm.errors.nascimento}
+                                    label="Data de nascimento"
+                                >
+                                    <input
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'nascimento',
+                                                event.target.value,
+                                            )
+                                        }
+                                        type="date"
+                                        value={leadForm.data.nascimento}
+                                    />
+                                </Field>
+                                <Field
+                                    error={leadForm.errors.serie_id}
+                                    label="Série"
+                                >
+                                    <select
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'serie_id',
+                                                event.target.value,
+                                            )
+                                        }
+                                        value={leadForm.data.serie_id}
+                                    >
+                                        <option value="">Selecione</option>
+                                        {series.map((serie) => (
+                                            <option
+                                                key={serie.id}
+                                                value={serie.id}
+                                            >
+                                                {serie.nome}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </Field>
+                                <Field
+                                    error={leadForm.errors.ciclo_id}
+                                    label="Ciclo"
+                                >
+                                    <select
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'ciclo_id',
+                                                event.target.value,
+                                            )
+                                        }
+                                        value={leadForm.data.ciclo_id}
+                                    >
+                                        <option value="">Selecione</option>
+                                        {cycles.map((cycle) => (
+                                            <option
+                                                key={cycle.id}
+                                                value={cycle.id}
+                                            >
+                                                {cycle.nome}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </Field>
+                                <Field
+                                    error={leadForm.errors.turno_id}
+                                    label="Turno"
+                                >
+                                    <select
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'turno_id',
+                                                event.target.value,
+                                            )
+                                        }
+                                        value={leadForm.data.turno_id}
+                                    >
+                                        <option value="">Selecione</option>
+                                        {shifts.map((shift) => (
+                                            <option
+                                                key={shift.id}
+                                                value={shift.id}
+                                            >
+                                                {shift.nome}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </Field>
+                                <Field
+                                    error={leadForm.errors.canal_mkt}
+                                    label="Canal de marketing"
+                                >
+                                    <input
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'canal_mkt',
+                                                event.target.value,
+                                            )
+                                        }
+                                        value={leadForm.data.canal_mkt}
+                                    />
+                                </Field>
+                                <Field
+                                    error={leadForm.errors.canal_contato}
+                                    label="Canal de contato"
+                                >
+                                    <input
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'canal_contato',
+                                                event.target.value,
+                                            )
+                                        }
+                                        value={leadForm.data.canal_contato}
+                                    />
+                                </Field>
+                            </div>
+                        )}
+                        {leadEditTab === 'funil' && (
+                            <div
+                                aria-labelledby="lead-edit-tab-funil"
+                                className="es-lead-edit-fields"
+                                id="lead-edit-panel-funil"
+                                role="tabpanel"
+                            >
+                                <Field
+                                    error={leadForm.errors.status_id}
+                                    label="Status"
+                                >
+                                    <select
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'status_id',
+                                                event.target.value,
+                                            )
+                                        }
+                                        value={leadForm.data.status_id}
+                                    >
+                                        {statuses.map((status) => (
+                                            <option
+                                                key={status.id}
+                                                value={status.id}
+                                            >
+                                                {status.nome}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </Field>
+                                <Field
+                                    error={leadForm.errors.retorno_data}
+                                    label="Data de retorno"
+                                >
+                                    <input
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'retorno_data',
+                                                event.target.value,
+                                            )
+                                        }
+                                        type="date"
+                                        value={leadForm.data.retorno_data}
+                                    />
+                                </Field>
+                                <Field
+                                    error={leadForm.errors.data_matricula}
+                                    label="Data de matrícula"
+                                >
+                                    <input
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'data_matricula',
+                                                event.target.value,
+                                            )
+                                        }
+                                        type="date"
+                                        value={leadForm.data.data_matricula}
+                                    />
+                                </Field>
+                                <Field
+                                    error={leadForm.errors.desconto}
+                                    label="Desconto (%)"
+                                >
+                                    <input
+                                        max="100"
+                                        min="0"
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'desconto',
+                                                event.target.value,
+                                            )
+                                        }
+                                        type="number"
+                                        value={leadForm.data.desconto}
+                                    />
+                                </Field>
+                                <Field
+                                    error={leadForm.errors.observacoes}
+                                    label="Observações"
+                                >
+                                    <textarea
+                                        onChange={(event) =>
+                                            leadForm.setData(
+                                                'observacoes',
+                                                event.target.value,
+                                            )
+                                        }
+                                        value={leadForm.data.observacoes}
+                                    />
+                                </Field>
+                            </div>
+                        )}
+                    </div>
                 </RecordModal>
             )}
             {scheduling !== null && (
