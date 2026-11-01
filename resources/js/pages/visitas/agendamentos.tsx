@@ -202,7 +202,37 @@ export default function Appointments({
                                 </thead>
                                 <tbody>
                                     {filteredAppointments.map((appointment) => (
-                                        <tr key={appointment.id}>
+                                        <tr
+                                            aria-label={`Editar agendamento de ${appointment.responsavel ?? ''}`}
+                                            key={appointment.id}
+                                            onClick={(event) => {
+                                                const target = event.target;
+                                                if (
+                                                    target instanceof Element &&
+                                                    target.closest(
+                                                        'button, a, input, select, textarea',
+                                                    )
+                                                ) {
+                                                    return;
+                                                }
+
+                                                openAppointment(appointment);
+                                            }}
+                                            onKeyDown={(event) => {
+                                                if (
+                                                    event.target ===
+                                                        event.currentTarget &&
+                                                    (event.key === 'Enter' ||
+                                                        event.key === ' ')
+                                                ) {
+                                                    event.preventDefault();
+                                                    openAppointment(
+                                                        appointment,
+                                                    );
+                                                }
+                                            }}
+                                            tabIndex={0}
+                                        >
                                             <td>
                                                 {appointment.data?.slice(
                                                     0,

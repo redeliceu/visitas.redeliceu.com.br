@@ -307,7 +307,35 @@ export default function Visits({
                             </thead>
                             <tbody>
                                 {filteredVisits.map((visit) => (
-                                    <tr key={visit.id}>
+                                    <tr
+                                        aria-label={`Editar visita de ${visit.responsavel ?? ''}`}
+                                        key={visit.id}
+                                        onClick={(event) => {
+                                            const target = event.target;
+                                            if (
+                                                target instanceof Element &&
+                                                target.closest(
+                                                    'button, a, input, select, textarea',
+                                                )
+                                            ) {
+                                                return;
+                                            }
+
+                                            openVisit(visit);
+                                        }}
+                                        onKeyDown={(event) => {
+                                            if (
+                                                event.target ===
+                                                    event.currentTarget &&
+                                                (event.key === 'Enter' ||
+                                                    event.key === ' ')
+                                            ) {
+                                                event.preventDefault();
+                                                openVisit(visit);
+                                            }
+                                        }}
+                                        tabIndex={0}
+                                    >
                                         <td>
                                             {visit.data?.slice(0, 10) || '—'}
                                         </td>
