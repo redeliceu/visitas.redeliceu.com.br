@@ -9,7 +9,7 @@
     ],
     "license": "MIT",
     "require": {
-        "php": "^8.3",
+        "php": "^8.3.36",
         "inertiajs/inertia-laravel": "^3.0",
         "laravel/framework": "^13.17",
         "laravel/tinker": "^3.0",
@@ -98,6 +98,9 @@
         }
     },
     "config": {
+        "platform": {
+            "php": "8.3.36"
+        },
         "optimize-autoloader": true,
         "preferred-install": "dist",
         "sort-packages": true,
