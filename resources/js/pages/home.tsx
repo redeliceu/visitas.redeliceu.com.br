@@ -20,6 +20,9 @@ type Campaign = {
     leads: number;
     appointments: number;
     visits: number;
+    expected_sales: number | null;
+    pace_difference: number | null;
+    pace_status: 'on_track' | 'behind' | 'not_started' | null;
 };
 type UnitRow = Metrics & { unit_id: number };
 type Props = {
@@ -28,7 +31,6 @@ type Props = {
     selectedUnitId: number | null;
     metrics: Metrics;
     unitRows: UnitRow[];
-    classSummary: { classes: number; capacity: number; occupied: number };
     campaigns: Campaign[];
 };
 
@@ -44,7 +46,6 @@ export default function Home({
     selectedUnitId,
     metrics,
     unitRows,
-    classSummary,
     campaigns,
 }: Props) {
     const user = auth.user;
@@ -78,8 +79,8 @@ export default function Home({
             <section className="es-panel">
                 <h2>Visão geral</h2>
                 <p className="es-sub">
-                    Acumulado histórico e ocupação das unidades às quais sua
-                    conta tem permissão.
+                    Acumulado histórico das unidades às quais sua conta tem
+                    permissão.
                 </p>
                 <div className="es-grid es-dashboard-overview">
                     <div className="es-stat">
@@ -104,23 +105,6 @@ export default function Home({
                             {metrics.visits
                                 ? `${((metrics.sales / metrics.visits) * 100).toFixed(1).replace('.', ',')}%`
                                 : '0,0%'}
-                        </strong>
-                    </div>
-                    <div className="es-stat">
-                        <small>Turmas</small>
-                        <strong>{classSummary.classes}</strong>
-                    </div>
-                    <div className="es-stat">
-                        <small>Vagas ocupadas</small>
-                        <strong>{classSummary.occupied}</strong>
-                    </div>
-                    <div className="es-stat">
-                        <small>Vagas disponíveis</small>
-                        <strong>
-                            {Math.max(
-                                0,
-                                classSummary.capacity - classSummary.occupied,
-                            )}
                         </strong>
                     </div>
                 </div>
@@ -202,13 +186,42 @@ export default function Home({
                                             </strong>
                                         </div>
                                         <div className="es-stat">
-                                            <small>Restantes</small>
+                                            <small>
+                                                Meta esperada até hoje
+                                            </small>
                                             <strong>
-                                                {Math.max(
-                                                    0,
-                                                    (campaign.meta ?? 0) -
-                                                        campaign.sales,
-                                                )}
+                                                {campaign.expected_sales ?? '—'}
+                                            </strong>
+                                        </div>
+                                        <div className="es-stat">
+                                            <small>Ritmo</small>
+                                            <strong>
+                                                {campaign.pace_status ===
+                                                'on_track'
+                                                    ? 'Dentro do ritmo'
+                                                    : campaign.pace_status ===
+                                                        'behind'
+                                                      ? 'Fora do ritmo'
+                                                      : campaign.pace_status ===
+                                                          'not_started'
+                                                        ? 'Ainda não iniciou'
+                                                        : campaign.meta
+                                                          ? 'Período não definido'
+                                                          : 'Meta não definida'}
+                                            </strong>
+                                        </div>
+                                        <div className="es-stat">
+                                            <small>
+                                                Diferença para o ritmo
+                                            </small>
+                                            <strong>
+                                                {campaign.pace_difference ===
+                                                null
+                                                    ? '—'
+                                                    : campaign.pace_difference >=
+                                                        0
+                                                      ? `+${campaign.pace_difference}`
+                                                      : campaign.pace_difference}
                                             </strong>
                                         </div>
                                     </div>

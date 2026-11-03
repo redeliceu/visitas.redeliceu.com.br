@@ -19,6 +19,7 @@ class Turno extends Model
         ];
     }
 
+    /** @return HasMany<Lead, $this> */
     public function leads(): HasMany
     {
         return $this->hasMany(Lead::class);

@@ -12,6 +12,7 @@ use App\Models\Unidade;
 use App\Models\User;
 use App\Models\Vendedor;
 use App\Models\Visita;
+use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
@@ -184,6 +185,38 @@ class CampaignReportingTest extends TestCase
             'inicio' => '2026-10-29',
             'fim' => '2026-10-29',
         ]))->assertNotFound();
+    }
+
+    public function test_dashboard_reports_unit_pace_against_the_campaign_goal(): void
+    {
+        $this->travelTo(CarbonImmutable::parse('2026-11-03 12:00:00'));
+        $unit = Unidade::query()->create(['nome' => 'Unidade Norte']);
+        $user = User::factory()->create(['role' => User::ROLE_MASTER]);
+        $campaign = Campanha::query()->create([
+            'unidade_id' => $unit->id,
+            'inicio' => '2026-11-01',
+            'fim' => '2026-11-10',
+            'meta' => 20,
+        ]);
+        $enrolledStatus = LeadStatus::query()->create(['nome' => 'Matriculado']);
+        Lead::query()->create([
+            'unidade_id' => $unit->id,
+            'responsavel' => 'Família matriculada',
+            'status_id' => $enrolledStatus->id,
+            'data' => '2026-11-03 10:00:00',
+            'data_matricula' => '2026-11-03 10:00:00',
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('home'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('home')
+                ->missing('classSummary')
+                ->where('campaigns.0.id', $campaign->id)
+                ->where('campaigns.0.expected_sales', 6)
+                ->where('campaigns.0.pace_difference', -5)
+                ->where('campaigns.0.pace_status', 'behind'));
     }
 
     public function test_attendance_role_can_view_campaign_metrics_but_cannot_change_goals(): void

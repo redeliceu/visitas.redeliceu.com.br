@@ -141,6 +141,88 @@ class CommercialReportService
     }
 
     /**
+     * Return the records counted as sales for one seller, including historical
+     * matriculated leads that do not have a linked visit or enrollment row.
+     *
+     * @return array<int, array{
+     *     id: string,
+     *     lead_id: int|null,
+     *     data: string|null,
+     *     aluno: string|null,
+     *     responsavel: string|null,
+     *     status: string
+     * }>
+     */
+    public function sellerSales(
+        User $user,
+        int $unitId,
+        int $sellerId,
+        string $start,
+        string $end,
+    ): array {
+        $visits = $this->unitAccess->scope(Visita::query(), $user)
+            ->where('unidade_id', $unitId)
+            ->whereDate('data', '>=', $start)
+            ->whereDate('data', '<=', $end)
+            ->with([
+                'matriculaAtiva:id,visita_id,status',
+                'lead:id,vendedor_id,aluno,responsavel',
+            ])
+            ->orderBy('id')
+            ->get(['id', 'lead_id', 'vendedor_id', 'data', 'aluno', 'responsavel', 'status'])
+            ->filter(fn (Visita $visit): bool => in_array($visit->status, [
+                'Matriculado',
+                'Matrícula',
+            ], true) || $visit->matriculaAtiva !== null);
+        $linkedLeadIds = $visits->pluck('lead_id')->filter()->unique()->all();
+        $sales = $visits
+            ->filter(fn (Visita $visit): bool => (int) ($visit->vendedor_id ?? $visit->lead?->vendedor_id) === $sellerId)
+            ->map(fn (Visita $visit): array => [
+                'id' => 'visita-'.$visit->id,
+                'lead_id' => $visit->lead_id ?? $visit->lead?->id,
+                'data' => (string) $visit->data,
+                'aluno' => $visit->aluno ?? $visit->lead?->aluno,
+                'responsavel' => $visit->responsavel ?? $visit->lead?->responsavel,
+                'status' => $visit->matriculaAtiva->status ?? $visit->status,
+            ]);
+
+        $historicalSales = $this->unitAccess->scope(Lead::query(), $user)
+            ->where('unidade_id', $unitId)
+            ->where('vendedor_id', $sellerId)
+            ->whereHas('status', fn (Builder $query) => $query->where('nome', 'Matriculado'))
+            ->where(function (Builder $query) use ($start, $end): void {
+                $query->where(function (Builder $dated) use ($start, $end): void {
+                    $dated->whereNotNull('data_matricula')
+                        ->whereDate('data_matricula', '>=', $start)
+                        ->whereDate('data_matricula', '<=', $end);
+                })->orWhere(function (Builder $undated) use ($start, $end): void {
+                    $undated->whereNull('data_matricula')
+                        ->whereDate('data', '>=', $start)
+                        ->whereDate('data', '<=', $end);
+                });
+            })
+            ->when($linkedLeadIds, fn (Builder $query) => $query->whereNotIn('id', $linkedLeadIds))
+            ->orderByDesc('data_matricula')
+            ->orderByDesc('data')
+            ->orderByDesc('id')
+            ->get(['id', 'data', 'data_matricula', 'aluno', 'responsavel'])
+            ->map(fn (Lead $lead): array => [
+                'id' => 'lead-'.$lead->id,
+                'lead_id' => $lead->id,
+                'data' => (string) ($lead->data_matricula ?? $lead->data),
+                'aluno' => $lead->aluno,
+                'responsavel' => $lead->responsavel,
+                'status' => 'Matriculado',
+            ]);
+
+        return $sales
+            ->concat($historicalSales)
+            ->sortByDesc('data')
+            ->values()
+            ->all();
+    }
+
+    /**
      * @return array{classes: int, capacity: int, occupied: int}
      */
     public function classSummary(User $user, ?int $unitId): array

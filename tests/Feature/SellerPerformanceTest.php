@@ -4,11 +4,15 @@ namespace Tests\Feature;
 
 use App\Models\Lead;
 use App\Models\LeadStatus;
+use App\Models\Matricula;
+use App\Models\Turma;
 use App\Models\Unidade;
 use App\Models\User;
 use App\Models\Vendedor;
+use App\Models\Visita;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
@@ -179,5 +183,120 @@ class SellerPerformanceTest extends TestCase
             ->assertInertia(fn (Assert $page) => $page
                 ->component('painel-vendas')
                 ->has('sellers', 2));
+    }
+
+    public function test_seller_detail_shows_follow_up_counts_and_enrollments(): void
+    {
+        $unit = Unidade::query()->create(['nome' => 'Unidade Norte']);
+        $user = User::factory()->create(['role' => User::ROLE_GESTOR]);
+        $user->unidades()->attach($unit);
+        $seller = Vendedor::query()->create([
+            'unidade_id' => $unit->id,
+            'nome' => 'Vendedor Norte',
+        ]);
+        $statuses = collect([
+            'Atendendo',
+            'Em Negociação',
+            'Agendado',
+        ])->mapWithKeys(fn (string $name) => [
+            $name => LeadStatus::query()->create(['nome' => $name]),
+        ]);
+        foreach ($statuses as $status) {
+            Lead::query()->create([
+                'unidade_id' => $unit->id,
+                'vendedor_id' => $seller->id,
+                'responsavel' => 'Família '.$status->nome,
+                'status_id' => $status->id,
+                'data' => now()->toDateString(),
+            ]);
+        }
+        $enrolledStatus = LeadStatus::query()->create(['nome' => 'Matriculado']);
+        $lead = Lead::query()->create([
+            'unidade_id' => $unit->id,
+            'vendedor_id' => $seller->id,
+            'responsavel' => 'Família matriculada',
+            'aluno' => 'Aluno Norte',
+            'status_id' => $enrolledStatus->id,
+            'data' => now()->toDateString(),
+            'data_matricula' => now()->toDateTimeString(),
+        ]);
+        $class = Turma::query()->create([
+            'unidade_id' => $unit->id,
+            'nome' => '1º ano',
+            'periodo' => 'Manhã',
+            'capacidade' => 20,
+            'sala' => '1',
+        ]);
+        $visit = Visita::query()->create([
+            'unidade_id' => $unit->id,
+            'lead_id' => $lead->id,
+            'vendedor_id' => $seller->id,
+            'data' => now()->toDateString(),
+            'responsavel' => 'Família matriculada',
+            'aluno' => 'Aluno Norte',
+            'status' => 'Matriculado',
+        ]);
+        Visita::query()->create([
+            'unidade_id' => $unit->id,
+            'vendedor_id' => $seller->id,
+            'data' => now()->toDateString(),
+            'responsavel' => 'Família visita sem matrícula vinculada',
+            'aluno' => 'Aluno Visita',
+            'status' => 'Matriculado',
+        ]);
+        $enrollment = Matricula::query()->create([
+            'unidade_id' => $unit->id,
+            'lead_id' => $lead->id,
+            'visita_id' => $visit->id,
+            'turma_id' => $class->id,
+            'data' => now()->toDateTimeString(),
+            'status' => 'Ativa',
+        ]);
+        Lead::query()->create([
+            'unidade_id' => $unit->id,
+            'vendedor_id' => $seller->id,
+            'responsavel' => 'Família histórica',
+            'aluno' => 'Aluno Histórico',
+            'status_id' => $enrolledStatus->id,
+            'data' => now()->toDateString(),
+            'data_matricula' => now()->toDateTimeString(),
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('painel-vendas', ['seller_id' => $seller->id]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('selectedSellerId', $seller->id)
+                ->where('sellerDetail.follow_up_counts.atendendo', 1)
+                ->where('sellerDetail.follow_up_counts.em_negociacao', 1)
+                ->where('sellerDetail.follow_up_counts.agendado', 1)
+                ->where('sellerDetail.metrics.sales', 3)
+                ->has('sellerDetail.follow_up_leads', 3)
+                ->where('sellerDetail.follow_up_leads.0.status', 'Agendado')
+                ->where('sellerDetail.follow_up_leads.2.status', 'Atendendo')
+                ->where('sellerDetail.follow_up_leads.2.responsavel', 'Família Atendendo')
+                ->has('sellerDetail.enrollments', 3)
+                ->where(
+                    'sellerDetail.enrollments',
+                    fn (Collection $enrollments): bool => $enrollments
+                        ->pluck('aluno')
+                        ->sort()
+                        ->values()
+                        ->all() === [
+                            'Aluno Histórico',
+                            'Aluno Norte',
+                            'Aluno Visita',
+                        ],
+                ));
+
+        $this->get(route('painel-vendas', [
+            'unidade_id' => $unit->id,
+            'seller_id' => $seller->id,
+            'lead_id' => $lead->id,
+        ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('selectedLead.id', $lead->id)
+                ->where('selectedLead.responsavel', 'Família matriculada'));
     }
 }
