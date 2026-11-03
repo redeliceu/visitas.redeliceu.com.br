@@ -14,7 +14,7 @@ class TurnoSeeder extends Seeder
             'Tarde',
             'Manhã + Contraturno',
             'Tarde + Contraturno',
-            'Integral'
+            'Integral',
         ];
 
         foreach ($turnos as $turno) {
