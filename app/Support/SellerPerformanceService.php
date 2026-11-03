@@ -88,8 +88,23 @@ class SellerPerformanceService
             'sellers' => $sellers
                 ->map(function (Vendedor $seller) use ($statuses, $statusCounts): array {
                     $counts = [];
+                    $followUpCounts = [
+                        'atendendo' => 0,
+                        'em_negociacao' => 0,
+                        'agendado' => 0,
+                    ];
                     foreach ($statuses as $status) {
                         $counts[$status->id] = (int) ($statusCounts->get($seller->id.':'.$status->id)->total ?? 0);
+                        $followUpKey = match ($status->nome) {
+                            'Atendendo' => 'atendendo',
+                            'Em Negociação' => 'em_negociacao',
+                            'Agendado' => 'agendado',
+                            default => null,
+                        };
+
+                        if ($followUpKey !== null) {
+                            $followUpCounts[$followUpKey] = $counts[$status->id];
+                        }
                     }
 
                     return [
@@ -102,9 +117,80 @@ class SellerPerformanceService
                         'user_name' => $seller->user?->name,
                         'leads' => array_sum($counts),
                         'status_counts' => $counts,
+                        'follow_up_counts' => $followUpCounts,
                     ];
                 })
                 ->all(),
         ];
+    }
+
+    /**
+     * @return array<int, array{
+     *     id: int,
+     *     data: string|null,
+     *     aluno: string|null,
+     *     responsavel: string,
+     *     telefone: string|null,
+     *     status: string
+     * }>
+     */
+    public function followUpLeads(
+        User $user,
+        int $unitId,
+        int $sellerId,
+        CarbonImmutable $snapshotAt,
+    ): array {
+        $followUpStatuses = LeadStatus::query()
+            ->whereIn('nome', ['Atendendo', 'Em Negociação', 'Agendado'])
+            ->get(['id', 'nome'])
+            ->keyBy('id');
+
+        if ($followUpStatuses->isEmpty()) {
+            return [];
+        }
+
+        $latestStatus = LeadStatusHistory::query()
+            ->select('to_status_id')
+            ->whereColumn('lead_id', 'leads.id')
+            ->where('changed_at', '<=', $snapshotAt)
+            ->orderByDesc('changed_at')
+            ->orderByDesc('id')
+            ->limit(1);
+        $leadSnapshots = $this->unitAccess->scope(Lead::query(), $user)
+            ->where('unidade_id', $unitId)
+            ->where('vendedor_id', $sellerId)
+            ->where('created_at', '<=', $snapshotAt)
+            ->select(['id', 'data'])
+            ->selectSub($latestStatus, 'snapshot_status_id');
+        $followUpSnapshots = DB::query()
+            ->fromSub($leadSnapshots, 'lead_snapshots')
+            ->select(['id', 'snapshot_status_id'])
+            ->whereIn('snapshot_status_id', $followUpStatuses->modelKeys())
+            ->get()
+            ->keyBy('id');
+
+        if ($followUpSnapshots->isEmpty()) {
+            return [];
+        }
+
+        return $this->unitAccess->scope(Lead::query(), $user)
+            ->where('unidade_id', $unitId)
+            ->whereIn('id', $followUpSnapshots->keys())
+            ->orderByDesc('data')
+            ->orderByDesc('id')
+            ->get(['id', 'data', 'aluno', 'responsavel', 'telefone'])
+            ->map(function (Lead $lead) use ($followUpSnapshots, $followUpStatuses): array {
+                $statusId = $followUpSnapshots->get($lead->id)->snapshot_status_id;
+
+                return [
+                    'id' => $lead->id,
+                    'data' => $lead->data,
+                    'aluno' => $lead->aluno,
+                    'responsavel' => $lead->responsavel,
+                    'telefone' => $lead->telefone,
+                    'status' => $followUpStatuses->get($statusId)->nome,
+                ];
+            })
+            ->all();
     }
 }

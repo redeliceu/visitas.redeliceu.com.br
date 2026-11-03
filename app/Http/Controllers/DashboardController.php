@@ -6,6 +6,7 @@ use App\Models\Campanha;
 use App\Models\User;
 use App\Support\CommercialReportService;
 use App\Support\UnitAccess;
+use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -35,6 +36,25 @@ class DashboardController extends Controller
                 $summary = $start && $start <= $end
                     ? $reportService->build($user, $campaign->unidade_id, $start, $end)['all']
                     : ['leads' => 0, 'appointments' => 0, 'visits' => 0, 'sales' => 0];
+                $expectedSales = null;
+                $paceDifference = null;
+                $paceStatus = null;
+
+                if ($campaign->meta !== null && $campaign->meta > 0 && $campaign->inicio && $campaign->fim) {
+                    $campaignStart = CarbonImmutable::parse($campaign->inicio->toDateString());
+                    $campaignEnd = CarbonImmutable::parse($campaign->fim->toDateString());
+                    $currentDate = CarbonImmutable::parse($today);
+                    $periodDays = $campaignStart->diffInDays($campaignEnd) + 1;
+                    if ($currentDate->lessThan($campaignStart)) {
+                        $expectedSales = 0;
+                        $paceStatus = 'not_started';
+                    } else {
+                        $elapsedDays = min($periodDays, $campaignStart->diffInDays($currentDate) + 1);
+                        $expectedSales = (int) ceil($campaign->meta * $elapsedDays / $periodDays);
+                        $paceDifference = (int) $summary['sales'] - $expectedSales;
+                        $paceStatus = $paceDifference >= 0 ? 'on_track' : 'behind';
+                    }
+                }
 
                 return [
                     'id' => $campaign->id,
@@ -47,6 +67,9 @@ class DashboardController extends Controller
                     'leads' => $summary['leads'],
                     'appointments' => $summary['appointments'],
                     'visits' => $summary['visits'],
+                    'expected_sales' => $expectedSales,
+                    'pace_difference' => $paceDifference,
+                    'pace_status' => $paceStatus,
                 ];
             });
 
@@ -55,7 +78,6 @@ class DashboardController extends Controller
             'selectedUnitId' => $unitId,
             'metrics' => $report['all'],
             'unitRows' => $report['byUnit'],
-            'classSummary' => $reportService->classSummary($user, $unitId),
             'campaigns' => $campaigns,
         ]);
     }
