@@ -1,6 +1,6 @@
 import { useForm } from '@inertiajs/react';
 import type { FormEvent } from 'react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import ListFilters from '@/components/visitas/ListFilters';
 import type { FilterableRecord } from '@/components/visitas/ListFilters';
 import RecordModal, { Field } from '@/components/visitas/RecordModal';
@@ -167,8 +167,38 @@ export default function Leads({
     const [detailsLead, setDetailsLead] = useState<Lead | null>(null);
     const [detailsTab, setDetailsTab] = useState<DetailsTab>('dados');
     const [scheduling, setScheduling] = useState<Lead | null>(null);
+    const [openActionsId, setOpenActionsId] = useState<number | null>(null);
     const leadForm = useForm<LeadData>(emptyLead);
     const scheduleForm = useForm({ data: '', horario: '' });
+    useEffect(() => {
+        if (openActionsId === null) {
+            return;
+        }
+
+        function handlePointerDown(event: PointerEvent) {
+            const target = event.target;
+            if (
+                target instanceof Element &&
+                !target.closest('.es-lead-actions')
+            ) {
+                setOpenActionsId(null);
+            }
+        }
+
+        function handleKeyDown(event: KeyboardEvent) {
+            if (event.key === 'Escape') {
+                setOpenActionsId(null);
+            }
+        }
+
+        document.addEventListener('pointerdown', handlePointerDown);
+        document.addEventListener('keydown', handleKeyDown);
+
+        return () => {
+            document.removeEventListener('pointerdown', handlePointerDown);
+            document.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [openActionsId]);
     const linkedSeller = sellers.find(
         (seller) =>
             seller.is_current_user &&
@@ -336,14 +366,15 @@ export default function Leads({
             </div>
             <ListFilters
                 page="leads"
+                paginationPageSize={20}
                 rows={leads}
                 sellers={sellers}
                 statuses={statuses.map((status) => status.nome)}
             >
                 {(filteredLeads) => (
                     <div id="leads-results">
-                        <div className="es-panel es-table-wrap">
-                            <table className="es-table">
+                        <div className="es-panel es-table-wrap es-leads-table-wrap">
+                            <table className="es-table es-leads-table">
                                 <thead>
                                     <tr>
                                         <th>Data</th>
@@ -390,9 +421,7 @@ export default function Leads({
                                             }}
                                             tabIndex={0}
                                         >
-                                            <td>
-                                                {lead.data?.slice(0, 10) || '—'}
-                                            </td>
+                                            <td>{dateLabel(lead.data)}</td>
                                             {selectedUnitId === null &&
                                                 units.length > 1 && (
                                                     <td>
@@ -430,68 +459,210 @@ export default function Leads({
                                                 />
                                             </td>
                                             <td>{lead.canal_mkt || '—'}</td>
-                                            <td>
-                                                <div className="es-lead-actions">
+                                            <td className="es-leads-actions-cell">
+                                                <div
+                                                    className={`es-lead-actions${openActionsId === lead.id ? ' is-open' : ''}`}
+                                                >
                                                     <button
-                                                        className="es-lead-action"
-                                                        onClick={() =>
-                                                            openDetails(lead)
+                                                        aria-expanded={
+                                                            openActionsId ===
+                                                            lead.id
                                                         }
-                                                        title="Ver dados e histórico da lead"
+                                                        aria-haspopup="menu"
+                                                        aria-controls={
+                                                            openActionsId ===
+                                                            lead.id
+                                                                ? `lead-actions-${lead.id}`
+                                                                : undefined
+                                                        }
+                                                        className="es-lead-actions-trigger"
+                                                        onClick={() =>
+                                                            setOpenActionsId(
+                                                                openActionsId ===
+                                                                    lead.id
+                                                                    ? null
+                                                                    : lead.id,
+                                                            )
+                                                        }
+                                                        onKeyDown={(event) => {
+                                                            if (
+                                                                event.key ===
+                                                                    'Escape' &&
+                                                                openActionsId ===
+                                                                    lead.id
+                                                            ) {
+                                                                setOpenActionsId(
+                                                                    null,
+                                                                );
+                                                            }
+                                                        }}
                                                         type="button"
                                                     >
+                                                        <span>Ações</span>
                                                         <i
-                                                            className="fas fa-clock-rotate-left"
                                                             aria-hidden="true"
+                                                            className="fas fa-chevron-down"
                                                         />
-                                                        <span>Detalhes</span>
                                                     </button>
-                                                    <button
-                                                        aria-label="Editar lead"
-                                                        className="es-lead-action"
-                                                        onClick={() =>
-                                                            openLead(lead)
-                                                        }
-                                                        title="Editar lead"
-                                                        type="button"
-                                                    >
-                                                        <i
-                                                            className="fas fa-pen"
-                                                            aria-hidden="true"
-                                                        />
-                                                        <span>Editar</span>
-                                                    </button>
-                                                    {lead.agendamentos.length >
-                                                        0 && (
-                                                        <a
-                                                            className="es-lead-action"
-                                                            href="/agendamentos"
-                                                            title="Abrir agendamentos"
+                                                    {openActionsId ===
+                                                        lead.id && (
+                                                        <div
+                                                            className="es-lead-actions-menu"
+                                                            id={`lead-actions-${lead.id}`}
+                                                            onKeyDown={(
+                                                                event,
+                                                            ) => {
+                                                                const items =
+                                                                    Array.from(
+                                                                        event.currentTarget.querySelectorAll<HTMLElement>(
+                                                                            '[role="menuitem"]',
+                                                                        ),
+                                                                    );
+                                                                const focusedIndex =
+                                                                    items.findIndex(
+                                                                        (
+                                                                            item,
+                                                                        ) =>
+                                                                            item ===
+                                                                            document.activeElement,
+                                                                    );
+                                                                let nextIndex =
+                                                                    focusedIndex;
+
+                                                                if (
+                                                                    event.key ===
+                                                                    'ArrowDown'
+                                                                ) {
+                                                                    nextIndex =
+                                                                        (focusedIndex +
+                                                                            1) %
+                                                                        items.length;
+                                                                } else if (
+                                                                    event.key ===
+                                                                    'ArrowUp'
+                                                                ) {
+                                                                    nextIndex =
+                                                                        (focusedIndex -
+                                                                            1 +
+                                                                            items.length) %
+                                                                        items.length;
+                                                                } else if (
+                                                                    event.key ===
+                                                                    'Home'
+                                                                ) {
+                                                                    nextIndex = 0;
+                                                                } else if (
+                                                                    event.key ===
+                                                                    'End'
+                                                                ) {
+                                                                    nextIndex =
+                                                                        items.length -
+                                                                        1;
+                                                                } else if (
+                                                                    event.key ===
+                                                                    'Escape'
+                                                                ) {
+                                                                    setOpenActionsId(
+                                                                        null,
+                                                                    );
+                                                                    event.currentTarget.parentElement
+                                                                        ?.querySelector<HTMLButtonElement>(
+                                                                            '.es-lead-actions-trigger',
+                                                                        )
+                                                                        ?.focus();
+                                                                    return;
+                                                                } else {
+                                                                    return;
+                                                                }
+
+                                                                event.preventDefault();
+                                                                items[
+                                                                    nextIndex
+                                                                ]?.focus();
+                                                            }}
+                                                            role="menu"
                                                         >
-                                                            <i
-                                                                className="fas fa-calendar-check"
-                                                                aria-hidden="true"
-                                                            />
-                                                            <span>
-                                                                Agendamentos
-                                                            </span>
-                                                        </a>
+                                                            <button
+                                                                className="es-lead-action"
+                                                                onClick={() => {
+                                                                    setOpenActionsId(
+                                                                        null,
+                                                                    );
+                                                                    openDetails(
+                                                                        lead,
+                                                                    );
+                                                                }}
+                                                                role="menuitem"
+                                                                type="button"
+                                                            >
+                                                                <i
+                                                                    aria-hidden="true"
+                                                                    className="fas fa-eye"
+                                                                />
+                                                                <span>
+                                                                    Detalhes
+                                                                </span>
+                                                            </button>
+                                                            <button
+                                                                className="es-lead-action"
+                                                                onClick={() => {
+                                                                    setOpenActionsId(
+                                                                        null,
+                                                                    );
+                                                                    openLead(
+                                                                        lead,
+                                                                    );
+                                                                }}
+                                                                role="menuitem"
+                                                                type="button"
+                                                            >
+                                                                <i
+                                                                    aria-hidden="true"
+                                                                    className="fas fa-pen"
+                                                                />
+                                                                <span>
+                                                                    Editar
+                                                                </span>
+                                                            </button>
+                                                            <button
+                                                                className="es-lead-action"
+                                                                onClick={() => {
+                                                                    setOpenActionsId(
+                                                                        null,
+                                                                    );
+                                                                    openSchedule(
+                                                                        lead,
+                                                                    );
+                                                                }}
+                                                                role="menuitem"
+                                                                type="button"
+                                                            >
+                                                                <i
+                                                                    aria-hidden="true"
+                                                                    className="fas fa-calendar-plus"
+                                                                />
+                                                                <span>
+                                                                    Agendar
+                                                                </span>
+                                                            </button>
+                                                            {lead.agendamentos
+                                                                .length > 0 && (
+                                                                <a
+                                                                    className="es-lead-action"
+                                                                    href="/agendamentos"
+                                                                    role="menuitem"
+                                                                >
+                                                                    <i
+                                                                        aria-hidden="true"
+                                                                        className="fas fa-calendar-check"
+                                                                    />
+                                                                    <span>
+                                                                        Agendamentos
+                                                                    </span>
+                                                                </a>
+                                                            )}
+                                                        </div>
                                                     )}
-                                                    <button
-                                                        aria-label="Agendar lead"
-                                                        className="es-lead-action es-lead-action-primary"
-                                                        onClick={() =>
-                                                            openSchedule(lead)
-                                                        }
-                                                        title="Agendar lead"
-                                                        type="button"
-                                                    >
-                                                        <i
-                                                            className="fas fa-calendar-plus"
-                                                            aria-hidden="true"
-                                                        />
-                                                        <span>Agendar</span>
-                                                    </button>
                                                 </div>
                                             </td>
                                         </tr>

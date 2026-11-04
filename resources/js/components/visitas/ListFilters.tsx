@@ -17,6 +17,7 @@ type Props<T extends FilterableRecord> = {
     rows: T[];
     sellers: Seller[];
     statuses: string[];
+    paginationPageSize?: number;
     children: (filteredRows: T[]) => React.ReactNode;
 };
 
@@ -42,6 +43,7 @@ export default function ListFilters<T extends FilterableRecord>({
     rows,
     sellers,
     statuses,
+    paginationPageSize,
     children,
 }: Props<T>) {
     const today = page === 'agendamentos' ? localToday() : '';
@@ -52,6 +54,7 @@ export default function ListFilters<T extends FilterableRecord>({
         seller: '',
         status: '',
     });
+    const [currentPage, setCurrentPage] = useState(1);
 
     const normalizedQuery = filters.q.trim().toLocaleLowerCase('pt-BR');
     const filteredRows = rows.filter((row) => {
@@ -83,15 +86,18 @@ export default function ListFilters<T extends FilterableRecord>({
 
     function setFilter(key: keyof Filters, value: string) {
         setFilters((current) => ({ ...current, [key]: value }));
+        setCurrentPage(1);
     }
 
     function clearFilters() {
         setFilters({ q: '', start: '', end: '', seller: '', status: '' });
+        setCurrentPage(1);
     }
 
     function filterToday() {
         const date = localToday();
         setFilters((current) => ({ ...current, start: date, end: date }));
+        setCurrentPage(1);
     }
 
     const totals = filteredRows.reduce<Record<string, number>>(
@@ -106,6 +112,17 @@ export default function ListFilters<T extends FilterableRecord>({
         },
         {},
     );
+    const pageCount = paginationPageSize
+        ? Math.ceil(filteredRows.length / paginationPageSize)
+        : 1;
+    const visiblePage = Math.min(currentPage, Math.max(pageCount, 1));
+    const pageRows = paginationPageSize
+        ? filteredRows.slice(
+              (visiblePage - 1) * paginationPageSize,
+              visiblePage * paginationPageSize,
+          )
+        : filteredRows;
+    const pageStart = (visiblePage - 1) * (paginationPageSize ?? 0);
 
     return (
         <>
@@ -213,7 +230,41 @@ export default function ListFilters<T extends FilterableRecord>({
                     )}
                 </div>
             </section>
-            {children(filteredRows)}
+            {children(pageRows)}
+            {paginationPageSize && filteredRows.length > paginationPageSize && (
+                <nav
+                    aria-label={`Paginação de ${page}`}
+                    className="es-list-pagination"
+                >
+                    <span>
+                        Exibindo {pageStart + 1}–
+                        {Math.min(
+                            pageStart + paginationPageSize,
+                            filteredRows.length,
+                        )}{' '}
+                        de {filteredRows.length}
+                    </span>
+                    <div>
+                        <button
+                            disabled={visiblePage === 1}
+                            onClick={() => setCurrentPage(visiblePage - 1)}
+                            type="button"
+                        >
+                            Anterior
+                        </button>
+                        <span>
+                            Página {visiblePage} de {pageCount}
+                        </span>
+                        <button
+                            disabled={visiblePage === pageCount}
+                            onClick={() => setCurrentPage(visiblePage + 1)}
+                            type="button"
+                        >
+                            Próxima
+                        </button>
+                    </div>
+                </nav>
+            )}
         </>
     );
 }
