@@ -1,4 +1,4 @@
-import { useForm } from '@inertiajs/react';
+import { router, useForm } from '@inertiajs/react';
 import type { FormEvent } from 'react';
 import { useEffect, useState } from 'react';
 import ListFilters from '@/components/visitas/ListFilters';
@@ -108,6 +108,8 @@ type Props = {
     units: Unit[];
     selectedUnitId: number | null;
     sellers: Seller[];
+    currentSellerIds: number[];
+    sellerScoped: boolean;
     statuses: Status[];
     series: Array<{ id: number; nome: string }>;
     cycles: Array<{ id: number; nome: string }>;
@@ -140,6 +142,41 @@ const emptyLead: LeadData = {
     desconto: '',
 };
 
+type SellerTransfer = {
+    id: number;
+    created_at: string;
+    from: string | null;
+    to: string | null;
+    reason: string | null;
+    user: string | null;
+};
+
+function sellerTransfers(lead: Lead): SellerTransfer[] {
+    return lead.edit_histories.flatMap((history) => {
+        const sellerChange = history.changes.find(
+            (change) => change.field === 'Vendedor',
+        );
+
+        if (!sellerChange) {
+            return [];
+        }
+
+        return [
+            {
+                id: history.id,
+                created_at: history.created_at,
+                from: sellerChange.old,
+                to: sellerChange.new,
+                reason:
+                    history.changes.find(
+                        (change) => change.field === 'Motivo da transferência',
+                    )?.new ?? null,
+                user: history.user?.name ?? null,
+            },
+        ];
+    });
+}
+
 function dateLabel(value: string | null | undefined): string {
     if (!value) {
         return '—';
@@ -156,11 +193,15 @@ export default function Leads({
     units,
     selectedUnitId,
     sellers,
+    currentSellerIds,
+    sellerScoped,
     statuses,
     series,
     cycles,
     shifts,
 }: Props) {
+    const [transferring, setTransferring] = useState<Lead | null>(null);
+    const transferForm = useForm({ vendedor_id: '', motivo: '' });
     const [editing, setEditing] = useState<Lead | null>(null);
     const [leadModalOpen, setLeadModalOpen] = useState(false);
     const [leadEditTab, setLeadEditTab] = useState<LeadEditTab>('contato');
@@ -170,6 +211,37 @@ export default function Leads({
     const [openActionsId, setOpenActionsId] = useState<number | null>(null);
     const leadForm = useForm<LeadData>(emptyLead);
     const scheduleForm = useForm({ data: '', horario: '' });
+
+    // Deep link from the seller panel: /leads?lead=ID&acao=editar|agendar|detalhes
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const action = params.get('acao');
+        const leadId = Number(params.get('lead'));
+        const target = leads.find((lead) => lead.id === leadId);
+
+        if (action === 'novo') {
+            openLead();
+        } else if (!target) {
+            return;
+        } else if (action === 'editar') {
+            openLead(target);
+        } else if (action === 'agendar') {
+            openSchedule(target);
+        } else {
+            openDetails(target);
+        }
+
+        params.delete('lead');
+        params.delete('acao');
+        const query = params.toString();
+        window.history.replaceState(
+            window.history.state,
+            '',
+            `${window.location.pathname}${query ? `?${query}` : ''}`,
+        );
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     useEffect(() => {
         if (openActionsId === null) {
             return;
@@ -318,6 +390,33 @@ export default function Leads({
         }
     }
 
+    function openTransfer(lead: Lead) {
+        setTransferring(lead);
+        transferForm.reset();
+        transferForm.clearErrors();
+    }
+
+    function closeTransfer() {
+        setTransferring(null);
+        transferForm.reset();
+        transferForm.clearErrors();
+    }
+
+    function submitTransfer(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+
+        if (transferring) {
+            transferForm.post(`/leads/${transferring.id}/transfer`, {
+                onSuccess: closeTransfer,
+                preserveScroll: true,
+            });
+        }
+    }
+
+    function claimLead(lead: Lead) {
+        router.post(`/leads/${lead.id}/claim`, {}, { preserveScroll: true });
+    }
+
     function openSchedule(lead: Lead) {
         setScheduling(lead);
         scheduleForm.reset();
@@ -352,8 +451,9 @@ export default function Leads({
                 <div>
                     <h1>Leads</h1>
                     <div className="es-sub">
-                        Acompanhamento de leads em todas as etapas • todas as
-                        unidades
+                        {sellerScoped
+                            ? 'Seus leads e a fila da unidade (leads sem vendedor)'
+                            : 'Acompanhamento de leads em todas as etapas • todas as unidades'}
                     </div>
                 </div>
                 <button
@@ -448,7 +548,10 @@ export default function Leads({
                                             </td>
                                             <td>{lead.telefone || '—'}</td>
                                             <td>
-                                                {lead.vendedor?.nome || '—'}
+                                                {lead.vendedor?.nome ||
+                                                    (sellerScoped
+                                                        ? 'Fila da unidade'
+                                                        : '—')}
                                             </td>
                                             <td>
                                                 <StatusPill
@@ -645,6 +748,60 @@ export default function Leads({
                                                                     Agendar
                                                                 </span>
                                                             </button>
+                                                            {sellerScoped &&
+                                                                !lead.vendedor && (
+                                                                    <button
+                                                                        className="es-lead-action"
+                                                                        onClick={() => {
+                                                                            setOpenActionsId(
+                                                                                null,
+                                                                            );
+                                                                            claimLead(
+                                                                                lead,
+                                                                            );
+                                                                        }}
+                                                                        role="menuitem"
+                                                                        type="button"
+                                                                    >
+                                                                        <i
+                                                                            aria-hidden="true"
+                                                                            className="fas fa-hand"
+                                                                        />
+                                                                        <span>
+                                                                            Assumir
+                                                                            lead
+                                                                        </span>
+                                                                    </button>
+                                                                )}
+                                                            {(!sellerScoped ||
+                                                                (lead.vendedor &&
+                                                                    currentSellerIds.includes(
+                                                                        lead
+                                                                            .vendedor
+                                                                            .id,
+                                                                    ))) && (
+                                                                <button
+                                                                    className="es-lead-action"
+                                                                    onClick={() => {
+                                                                        setOpenActionsId(
+                                                                            null,
+                                                                        );
+                                                                        openTransfer(
+                                                                            lead,
+                                                                        );
+                                                                    }}
+                                                                    role="menuitem"
+                                                                    type="button"
+                                                                >
+                                                                    <i
+                                                                        aria-hidden="true"
+                                                                        className="fas fa-right-left"
+                                                                    />
+                                                                    <span>
+                                                                        Transferir
+                                                                    </span>
+                                                                </button>
+                                                            )}
                                                             {lead.agendamentos
                                                                 .length > 0 && (
                                                                 <a
@@ -695,7 +852,7 @@ export default function Leads({
                     onClose={() => setDetailsLead(null)}
                     onSubmit={(event) => event.preventDefault()}
                     processing={false}
-                    title={`Lead — ${detailsLead.responsavel ?? 'Sem responsável'}`}
+                    title={`Lead: ${detailsLead.responsavel ?? 'Sem responsável'}`}
                 >
                     <div className="es-lead-detail">
                         <div
@@ -884,13 +1041,13 @@ export default function Leads({
                                                             0,
                                                             5,
                                                         ) || '—'}
-                                                        {' — '}
+                                                        {' · '}
                                                         {appointment.status}
                                                         {appointment.fonte
                                                             ? ` (${appointment.fonte})`
                                                             : ''}
                                                         {appointment.observacoes
-                                                            ? ` — ${appointment.observacoes}`
+                                                            ? ` · ${appointment.observacoes}`
                                                             : ''}
                                                     </li>
                                                 ),
@@ -912,14 +1069,14 @@ export default function Leads({
                                                         {visit.horario
                                                             ? ` às ${visit.horario.slice(0, 5)}`
                                                             : ''}
-                                                        {' — '}
+                                                        {' · '}
                                                         {visit.status} /{' '}
                                                         {visit.situacao}
-                                                        {' — '}
+                                                        {' · '}
                                                         {visit.vendedor?.nome ||
                                                             'Sem vendedor'}
                                                         {visit.observacoes
-                                                            ? ` — ${visit.observacoes}`
+                                                            ? ` · ${visit.observacoes}`
                                                             : ''}
                                                     </li>
                                                 ),
@@ -942,6 +1099,46 @@ export default function Leads({
                                 role="tabpanel"
                             >
                                 <section>
+                                    <h3>Transferências de vendedor</h3>
+                                    {sellerTransfers(detailsLead).length > 0 ? (
+                                        <ol>
+                                            {sellerTransfers(detailsLead).map(
+                                                (transfer) => (
+                                                    <li key={transfer.id}>
+                                                        <strong>
+                                                            {new Date(
+                                                                transfer.created_at,
+                                                            ).toLocaleString(
+                                                                'pt-BR',
+                                                            )}
+                                                        </strong>
+                                                        {' · '}
+                                                        {transfer.from ??
+                                                            'Fila da unidade'}{' '}
+                                                        →{' '}
+                                                        {transfer.to ??
+                                                            'Fila da unidade'}
+                                                        {' • por '}
+                                                        {transfer.user ??
+                                                            'Usuário removido'}
+                                                        {transfer.reason && (
+                                                            <div className="es-sub">
+                                                                Motivo:{' '}
+                                                                {
+                                                                    transfer.reason
+                                                                }
+                                                            </div>
+                                                        )}
+                                                    </li>
+                                                ),
+                                            )}
+                                        </ol>
+                                    ) : (
+                                        <p>Nenhuma transferência registrada.</p>
+                                    )}
+                                </section>
+
+                                <section>
                                     <h3>Histórico de alterações</h3>
                                     {detailsLead.edit_histories.length > 0 ? (
                                         <ol>
@@ -955,7 +1152,7 @@ export default function Leads({
                                                                 'pt-BR',
                                                             )}
                                                         </strong>
-                                                        {' — '}
+                                                        {' · '}
                                                         {history.user?.name ||
                                                             'Usuário removido'}
                                                         <ul>
@@ -1003,14 +1200,14 @@ export default function Leads({
                                                                 'pt-BR',
                                                             )}
                                                         </strong>
-                                                        {' — '}
+                                                        {' · '}
                                                         {history.from_status
                                                             ?.nome ?? 'Início'}
                                                         {' → '}
                                                         {history.to_status
                                                             ?.nome ??
                                                             'Sem situação'}
-                                                        {' — '}
+                                                        {' · '}
                                                         {history.changed_by
                                                             ?.name ??
                                                             'Sistema/API ou registro inicial'}
@@ -1499,13 +1696,73 @@ export default function Leads({
                     </div>
                 </RecordModal>
             )}
+            {transferring !== null && (
+                <RecordModal
+                    onClose={closeTransfer}
+                    onSubmit={submitTransfer}
+                    processing={transferForm.processing}
+                    submitLabel="Transferir"
+                    title={`Transferir lead: ${transferring.responsavel ?? ''}`}
+                >
+                    <p className="es-schedule-note">
+                        Vendedor atual:{' '}
+                        {transferring.vendedor?.nome ?? 'Fila da unidade'}. A
+                        transferência fica registrada no histórico do lead, e os
+                        agendamentos em aberto passam para o novo vendedor.
+                    </p>
+                    <Field
+                        error={transferForm.errors.vendedor_id}
+                        label="Novo vendedor"
+                    >
+                        <select
+                            onChange={(event) =>
+                                transferForm.setData(
+                                    'vendedor_id',
+                                    event.target.value,
+                                )
+                            }
+                            required
+                            value={transferForm.data.vendedor_id}
+                        >
+                            <option value="">Selecione</option>
+                            {sellers
+                                .filter(
+                                    (seller) =>
+                                        seller.unidade_id ===
+                                            transferring.unidade_id &&
+                                        seller.id !== transferring.vendedor?.id,
+                                )
+                                .map((seller) => (
+                                    <option key={seller.id} value={seller.id}>
+                                        {seller.nome}
+                                    </option>
+                                ))}
+                        </select>
+                    </Field>
+                    <Field
+                        error={transferForm.errors.motivo}
+                        label="Motivo (opcional)"
+                    >
+                        <textarea
+                            maxLength={500}
+                            onChange={(event) =>
+                                transferForm.setData(
+                                    'motivo',
+                                    event.target.value,
+                                )
+                            }
+                            value={transferForm.data.motivo}
+                        />
+                    </Field>
+                </RecordModal>
+            )}
             {scheduling !== null && (
                 <RecordModal
                     onClose={closeSchedule}
                     onSubmit={submitSchedule}
                     processing={scheduleForm.processing}
                     submitLabel="Agendar"
-                    title={`Agendar visita — ${scheduling.responsavel ?? ''}`}
+                    title={`Agendar visita: ${scheduling.responsavel ?? ''}`}
                 >
                     <Field error={scheduleForm.errors.data} label="Data">
                         <input

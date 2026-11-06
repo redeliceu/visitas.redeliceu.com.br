@@ -8,6 +8,7 @@ use App\Models\Unidade;
 use App\Models\User;
 use App\Models\Vendedor;
 use App\Models\Visita;
+use App\Support\SellerScope;
 use App\Support\UnitAccess;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
@@ -27,7 +28,10 @@ class AgendamentoController extends Controller
         'Cancelado',
     ];
 
-    public function __construct(private readonly UnitAccess $unitAccess) {}
+    public function __construct(
+        private readonly UnitAccess $unitAccess,
+        private readonly SellerScope $sellerScope,
+    ) {}
 
     public function index(Request $request): Response
     {
@@ -36,7 +40,7 @@ class AgendamentoController extends Controller
         $units = $this->unitAccess->availableUnits($user);
         $unitId = $this->unitAccess->selectedUnitId($request, $user, $units);
 
-        $appointments = $this->unitAccess->scope(Agendamento::query(), $user)
+        $appointments = $this->sellerScope->records(Agendamento::query(), $user)
             ->when($unitId, fn (Builder $query) => $query->where('unidade_id', $unitId))
             ->with(['unidade:id,nome', 'vendedor:id,nome', 'lead:id', 'visita:id'])
             ->orderByDesc('data')
@@ -59,6 +63,11 @@ class AgendamentoController extends Controller
         $user = $request->user();
         abort_unless($user instanceof User, 401);
         $this->unitAccess->ensureCanAccess($user, (int) $data['unidade_id']);
+        $data['vendedor_id'] = $this->sellerScope->resolveSellerId(
+            $user,
+            (int) $data['unidade_id'],
+            $data['vendedor_id'] ?? null,
+        );
 
         Agendamento::query()->create($data);
 
@@ -69,9 +78,14 @@ class AgendamentoController extends Controller
     {
         $user = $request->user();
         abort_unless($user instanceof User, 401);
-        $this->unitAccess->ensureCanAccess($user, $agendamento->unidade_id);
+        $this->sellerScope->ensureCanAccessRecord($user, $agendamento);
         $data = $this->validatedAppointmentData($request, $agendamento);
         $this->unitAccess->ensureCanAccess($user, (int) $data['unidade_id']);
+        $data['vendedor_id'] = $this->sellerScope->resolveSellerId(
+            $user,
+            (int) $data['unidade_id'],
+            $data['vendedor_id'] ?? null,
+        );
         $agendamento->update($data);
 
         return back()->with('success', 'Agendamento atualizado.');
@@ -81,7 +95,7 @@ class AgendamentoController extends Controller
     {
         $user = $request->user();
         abort_unless($user instanceof User, 401);
-        $this->unitAccess->ensureCanAccess($user, $agendamento->unidade_id);
+        $this->sellerScope->ensureCanAccessRecord($user, $agendamento);
 
         $deleted = DB::transaction(function () use ($agendamento): bool {
             $lockedAppointment = Agendamento::query()
@@ -132,7 +146,7 @@ class AgendamentoController extends Controller
     {
         $user = $request->user();
         abort_unless($user instanceof User, 401);
-        $this->unitAccess->ensureCanAccess($user, $agendamento->unidade_id);
+        $this->sellerScope->ensureCanAccessRecord($user, $agendamento);
 
         if ($agendamento->status === 'Cancelado') {
             return back()->withErrors([

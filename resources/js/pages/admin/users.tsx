@@ -1,4 +1,4 @@
-import { Head, router, useForm } from '@inertiajs/react';
+import { Head, router, useForm, usePage } from '@inertiajs/react';
 import type { FormEvent } from 'react';
 import { useState } from 'react';
 
@@ -13,10 +13,52 @@ type Account = {
     unidades: Unit[];
     vendedores: Array<{ id: number; unidade_id: number; nome: string }>;
 };
-type Props = { users: Account[]; units: Unit[]; roles: Role[] };
+type UnlinkedSeller = {
+    id: number;
+    unidade_id: number;
+    unidade: string | null;
+    nome: string;
+    ativo: boolean;
+    leads_count: number;
+};
+type Props = {
+    users: Account[];
+    units: Unit[];
+    roles: Role[];
+    unlinkedSellers: UnlinkedSeller[];
+};
 
-export default function Users({ users, units, roles }: Props) {
+export default function Users({ users, units, roles, unlinkedSellers }: Props) {
+    const page = usePage<{ flash?: { success?: string | null } }>();
     const [editing, setEditing] = useState<Account | null>(null);
+    const linkForm = useForm({ vendedor_id: '' });
+
+    function linkSeller(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+
+        if (!editing) {
+            return;
+        }
+
+        const seller = unlinkedSellers.find(
+            (candidate) => String(candidate.id) === linkForm.data.vendedor_id,
+        );
+        const confirmed = window.confirm(
+            `Vincular "${seller?.nome ?? ''}" à conta de ${editing.name}? ` +
+                'Se a conta já tiver um vendedor nesta unidade, os leads, ' +
+                'agendamentos, visitas e metas dele serão mesclados no ' +
+                'vendedor escolhido, e o cadastro antigo será desativado.',
+        );
+
+        if (!confirmed) {
+            return;
+        }
+
+        linkForm.post(`/admin/users/${editing.id}/sellers`, {
+            preserveScroll: true,
+            onSuccess: resetForm,
+        });
+    }
     const form = useForm({
         name: '',
         email: '',
@@ -93,6 +135,16 @@ export default function Users({ users, units, roles }: Props) {
                         Sair
                     </button>
                 </header>
+                {page.props.flash?.success && (
+                    <div className="mx-auto mt-6 max-w-6xl px-6">
+                        <p
+                            className="rounded border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-800"
+                            role="status"
+                        >
+                            {page.props.flash.success}
+                        </p>
+                    </div>
+                )}
                 <div className="mx-auto grid max-w-6xl gap-6 px-6 py-8 lg:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
                     <section className="overflow-x-auto rounded-lg bg-white p-5 shadow-sm">
                         <h2 className="mb-4 text-lg font-semibold text-slate-900">
@@ -118,7 +170,7 @@ export default function Users({ users, units, roles }: Props) {
                                             </div>
                                             {user.role === 'atendimento' && (
                                                 <div className="text-slate-500">
-                                                    Vendedores gerados:{' '}
+                                                    Vendedores vinculados:{' '}
                                                     {user.vendedores.length}
                                                 </div>
                                             )}
@@ -300,6 +352,28 @@ export default function Users({ users, units, roles }: Props) {
                             />
                             Conta ativa
                         </label>
+                        {editing && editing.role === 'atendimento' && (
+                            <fieldset className="space-y-2 rounded border border-slate-200 p-3">
+                                <legend className="px-1 text-sm font-medium text-slate-700">
+                                    Vendedores desta conta
+                                </legend>
+                                <ul className="text-sm text-slate-600">
+                                    {editing.vendedores.map((seller) => (
+                                        <li key={seller.id}>
+                                            {seller.nome} •{' '}
+                                            {units.find(
+                                                (unit) =>
+                                                    unit.id ===
+                                                    seller.unidade_id,
+                                            )?.nome ?? 'Unidade inativa'}
+                                        </li>
+                                    ))}
+                                    {editing.vendedores.length === 0 && (
+                                        <li>Nenhum vendedor vinculado.</li>
+                                    )}
+                                </ul>
+                            </fieldset>
+                        )}
                         <div className="flex gap-2">
                             <button
                                 className="rounded bg-blue-800 px-4 py-2 text-white disabled:opacity-60"
@@ -319,6 +393,73 @@ export default function Users({ users, units, roles }: Props) {
                             )}
                         </div>
                     </form>
+                    {editing && editing.role === 'atendimento' && (
+                        <form
+                            className="space-y-3 rounded-lg bg-white p-5 shadow-sm lg:col-start-2"
+                            onSubmit={linkSeller}
+                        >
+                            <h2 className="text-lg font-semibold text-slate-900">
+                                Vincular vendedor existente
+                            </h2>
+                            <p className="text-sm text-slate-600">
+                                Use para ligar {editing.name} a um vendedor já
+                                cadastrado sem conta, por exemplo um vendedor da
+                                importação histórica. Os leads desse vendedor
+                                passam a aparecer para a conta.
+                            </p>
+                            <label className="block text-sm font-medium text-slate-700">
+                                Vendedor sem conta
+                                <select
+                                    className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
+                                    onChange={(event) =>
+                                        linkForm.setData(
+                                            'vendedor_id',
+                                            event.target.value,
+                                        )
+                                    }
+                                    required
+                                    value={linkForm.data.vendedor_id}
+                                >
+                                    <option value="">Selecione</option>
+                                    {unlinkedSellers
+                                        .filter((seller) =>
+                                            editing.unidades.some(
+                                                (unit) =>
+                                                    unit.id ===
+                                                    seller.unidade_id,
+                                            ),
+                                        )
+                                        .map((seller) => (
+                                            <option
+                                                key={seller.id}
+                                                value={seller.id}
+                                            >
+                                                {seller.nome} • {seller.unidade}{' '}
+                                                • {seller.leads_count} leads
+                                                {seller.ativo
+                                                    ? ''
+                                                    : ' (inativo)'}
+                                            </option>
+                                        ))}
+                                </select>
+                                {linkForm.errors.vendedor_id && (
+                                    <span className="mt-1 block text-sm text-red-700">
+                                        {linkForm.errors.vendedor_id}
+                                    </span>
+                                )}
+                            </label>
+                            <button
+                                className="rounded bg-blue-800 px-4 py-2 text-white disabled:opacity-60"
+                                disabled={
+                                    linkForm.processing ||
+                                    linkForm.data.vendedor_id === ''
+                                }
+                                type="submit"
+                            >
+                                Vincular e mesclar
+                            </button>
+                        </form>
+                    )}
                 </div>
             </main>
         </>

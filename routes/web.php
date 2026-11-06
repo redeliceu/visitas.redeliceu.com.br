@@ -9,6 +9,7 @@ use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\CampanhaController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\LeadController;
+use App\Http\Controllers\LeadFollowUpController;
 use App\Http\Controllers\RelatorioController;
 use App\Http\Controllers\TurmaController;
 use App\Http\Controllers\VendedorController;
@@ -33,6 +34,11 @@ Route::middleware(['auth', 'active'])->group(function () {
     Route::get('/leads', [LeadController::class, 'index'])->name('leads.index');
     Route::post('/leads', [LeadController::class, 'store'])->name('leads.store');
     Route::put('/leads/{lead}', [LeadController::class, 'update'])->name('leads.update');
+    Route::post('/leads/{lead}/transfer', [LeadController::class, 'transfer'])->name('leads.transfer');
+    Route::post('/leads/{lead}/claim', [LeadController::class, 'claim'])->name('leads.claim');
+    Route::post('/leads/{lead}/follow-ups', [LeadFollowUpController::class, 'store'])->name('leads.follow-ups.store');
+    Route::put('/follow-ups/{followUp}', [LeadFollowUpController::class, 'update'])->name('follow-ups.update');
+    Route::delete('/follow-ups/{followUp}', [LeadFollowUpController::class, 'destroy'])->name('follow-ups.destroy');
     Route::post('/leads/{lead}/schedule', [LeadController::class, 'schedule'])->name('leads.schedule');
     Route::get('/agendamentos', [AgendamentoController::class, 'index'])->name('agendamentos.index');
     Route::post('/agendamentos', [AgendamentoController::class, 'store'])->name('agendamentos.store');
@@ -69,6 +75,7 @@ Route::middleware(['auth', 'active'])->group(function () {
         Route::get('/users', [UserController::class, 'index'])->name('users.index');
         Route::post('/users', [UserController::class, 'store'])->name('users.store');
         Route::put('/users/{user}', [UserController::class, 'update'])->name('users.update');
+        Route::post('/users/{user}/sellers', [UserController::class, 'linkSeller'])->name('users.link-seller');
         Route::patch('/users/{user}/active', [UserController::class, 'setActive'])->name('users.active');
 
         Route::get('/units', [UnidadeController::class, 'index'])->name('units.index');

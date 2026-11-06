@@ -29,10 +29,16 @@ class AccessControlTest extends TestCase
         ])->assertRedirect(route('home'));
 
         $this->assertAuthenticatedAs($user);
+        // Atendimento/Vendedor lands on the individual seller panel (D-026).
         $this->get(route('home'))->assertOk()->assertInertia(
-            fn (Assert $page) => $page->component('home')
+            fn (Assert $page) => $page->component('painel-vendedor')
                 ->where('auth.user.id', $user->id),
         );
+
+        $this->actingAs(User::factory()->create(['role' => User::ROLE_MASTER]))
+            ->get(route('home'))->assertOk()->assertInertia(
+                fn (Assert $page) => $page->component('home'),
+            );
     }
 
     public function test_initial_master_can_be_created_through_the_console(): void

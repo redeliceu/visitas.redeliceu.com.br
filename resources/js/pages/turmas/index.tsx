@@ -155,7 +155,7 @@ export default function Classes({
     function deleteClass(classRoom: ClassRoom) {
         if (
             !window.confirm(
-                `Excluir a turma ${classRoom.nome} — sala ${classRoom.sala ?? 'não definida'}?`,
+                `Excluir a turma ${classRoom.nome} (sala ${classRoom.sala ?? 'não definida'})?`,
             )
         ) {
             return;

@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Unidade;
 use App\Models\User;
+use App\Models\Vendedor;
+use App\Support\SellerLinkService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -22,6 +24,20 @@ class UserController extends Controller
                 'id', 'name', 'email', 'role', 'ativo',
             ]),
             'units' => Unidade::query()->where('ativo', true)->orderBy('nome')->get(['id', 'nome']),
+            'unlinkedSellers' => Vendedor::query()
+                ->whereNull('user_id')
+                ->with('unidade:id,nome')
+                ->withCount('leads')
+                ->orderBy('nome')
+                ->get(['id', 'unidade_id', 'nome', 'ativo'])
+                ->map(fn (Vendedor $seller): array => [
+                    'id' => $seller->id,
+                    'unidade_id' => $seller->unidade_id,
+                    'unidade' => $seller->unidade?->nome,
+                    'nome' => $seller->nome,
+                    'ativo' => $seller->ativo,
+                    'leads_count' => (int) $seller->getAttribute('leads_count'),
+                ]),
             'roles' => [
                 ['value' => User::ROLE_GESTOR, 'label' => 'Gestor de unidade'],
                 ['value' => User::ROLE_ATENDIMENTO, 'label' => 'Atendimento / Vendedor'],
@@ -63,6 +79,26 @@ class UserController extends Controller
         });
 
         return back()->with('success', 'Usuário atualizado.');
+    }
+
+    public function linkSeller(Request $request, User $user, SellerLinkService $links): RedirectResponse
+    {
+        $data = $request->validate([
+            'vendedor_id' => ['required', 'integer', Rule::exists('vendedores', 'id')],
+        ]);
+
+        $result = $links->link($user, Vendedor::query()->whereKey($data['vendedor_id'])->firstOrFail());
+        $message = $result['merged_from'] === null
+            ? 'Vendedor vinculado à conta.'
+            : sprintf(
+                'Vendedor vinculado à conta. Registros mesclados: %d leads, %d agendamentos, %d visitas e %d metas.',
+                $result['leads'],
+                $result['appointments'],
+                $result['visits'],
+                $result['goals'],
+            );
+
+        return back()->with('success', $message);
     }
 
     public function setActive(Request $request, User $user): RedirectResponse
