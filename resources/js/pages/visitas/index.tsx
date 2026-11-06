@@ -641,7 +641,7 @@ export default function Visits({
                     onClose={() => setStatusVisit(null)}
                     onSubmit={submitStatus}
                     processing={statusForm.processing}
-                    title={`Status da visita — ${statusVisit.responsavel}`}
+                    title={`Status da visita: ${statusVisit.responsavel}`}
                     submitLabel="Atualizar status"
                 >
                     <Field error={statusForm.errors.status} label="Status">
@@ -740,8 +740,8 @@ export default function Visits({
                     processing={enrollmentForm.processing}
                     title={
                         assigningClass
-                            ? `Definir turma — ${enrollmentVisit.responsavel}`
-                            : `Efetivar matrícula — ${enrollmentVisit.responsavel}`
+                            ? `Definir turma: ${enrollmentVisit.responsavel}`
+                            : `Efetivar matrícula: ${enrollmentVisit.responsavel}`
                     }
                     submitLabel={
                         assigningClass ? 'Definir turma' : 'Efetivar matrícula'

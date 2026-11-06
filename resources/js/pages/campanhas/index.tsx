@@ -224,8 +224,15 @@ export default function Campaigns({
                                 <div className="es-panel es-campaign-pad">
                                     <div className="es-grid">
                                         <div className="es-stat">
-                                            <small>Meta de matrículas</small>
-                                            <strong>{campaign.meta}</strong>
+                                            <small>
+                                                {canManage
+                                                    ? 'Meta de matrículas'
+                                                    : 'Minha meta de matrículas'}
+                                            </small>
+                                            <strong>
+                                                {campaign.meta ??
+                                                    'Não definida'}
+                                            </strong>
                                         </div>
                                         <div className="es-stat">
                                             <small>Matrículas realizadas</small>
@@ -262,7 +269,11 @@ export default function Campaigns({
                                             style={{ width: `${progress}%` }}
                                         />
                                     </div>
-                                    <h3>Funil da campanha</h3>
+                                    <h3>
+                                        {canManage
+                                            ? 'Funil da campanha'
+                                            : 'Meu funil na campanha'}
+                                    </h3>
                                     <div className="es-grid">
                                         <div className="es-stat">
                                             <small>Leads</small>
@@ -294,7 +305,11 @@ export default function Campaigns({
                                         representam a conversão de uma mesma
                                         coorte.
                                     </p>
-                                    <h3>Metas individuais</h3>
+                                    <h3>
+                                        {canManage
+                                            ? 'Metas individuais'
+                                            : 'Minha meta individual'}
+                                    </h3>
                                     {unit.sellers.length > 0 && canManage ? (
                                         <div className="es-goal-list">
                                             {unit.sellers.map((seller) => (

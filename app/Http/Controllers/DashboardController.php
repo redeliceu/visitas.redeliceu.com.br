@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\Campanha;
 use App\Models\User;
 use App\Support\CommercialReportService;
+use App\Support\SellerPanelService;
+use App\Support\SellerScope;
 use App\Support\UnitAccess;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
@@ -17,11 +19,21 @@ class DashboardController extends Controller
         Request $request,
         UnitAccess $unitAccess,
         CommercialReportService $reportService,
+        SellerScope $sellerScope,
+        SellerPanelService $sellerPanel,
     ): Response {
         $user = $request->user();
         abort_unless($user instanceof User, 401);
         $units = $unitAccess->availableUnits($user);
         $unitId = $unitAccess->selectedUnitId($request, $user, $units);
+
+        if ($sellerScope->applies($user)) {
+            return Inertia::render('painel-vendedor', [
+                'units' => $units->map(fn ($unit) => ['id' => $unit->id, 'nome' => $unit->nome]),
+                'selectedUnitId' => $unitId,
+                ...$sellerPanel->build($user, $unitId),
+            ]);
+        }
         $today = now()->toDateString();
         $report = $reportService->build($user, $unitId, '2000-01-01', $today);
         $campaigns = $unitAccess->scope(Campanha::query(), $user)

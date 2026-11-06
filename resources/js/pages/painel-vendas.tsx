@@ -809,7 +809,7 @@ export default function SalesDashboard({
                     >
                         <div className="es-modal-head">
                             <h2 id="seller-lead-detail-title">
-                                Lead — {selectedLead.responsavel}
+                                Lead: {selectedLead.responsavel}
                             </h2>
                             <button
                                 aria-label="Fechar detalhamento da lead"
@@ -1037,13 +1037,13 @@ export default function SalesDashboard({
                                                                 0,
                                                                 5,
                                                             ) || '—'}
-                                                            {' — '}
+                                                            {' · '}
                                                             {appointment.status}
                                                             {appointment.fonte
                                                                 ? ` (${appointment.fonte})`
                                                                 : ''}
                                                             {appointment.observacoes
-                                                                ? ` — ${appointment.observacoes}`
+                                                                ? ` · ${appointment.observacoes}`
                                                                 : ''}
                                                         </li>
                                                     ),
@@ -1068,17 +1068,17 @@ export default function SalesDashboard({
                                                             {visit.horario
                                                                 ? ` às ${visit.horario.slice(0, 5)}`
                                                                 : ''}
-                                                            {' — '}
+                                                            {' · '}
                                                             {
                                                                 visit.status
                                                             } /{' '}
                                                             {visit.situacao}
-                                                            {' — '}
+                                                            {' · '}
                                                             {visit.vendedor
                                                                 ?.nome ??
                                                                 'Sem vendedor'}
                                                             {visit.observacoes
-                                                                ? ` — ${visit.observacoes}`
+                                                                ? ` · ${visit.observacoes}`
                                                                 : ''}
                                                         </li>
                                                     ),
@@ -1113,7 +1113,7 @@ export default function SalesDashboard({
                                                                     'pt-BR',
                                                                 )}
                                                             </strong>
-                                                            {' — '}
+                                                            {' · '}
                                                             {history.user
                                                                 ?.name ??
                                                                 'Usuário removido'}
@@ -1162,7 +1162,7 @@ export default function SalesDashboard({
                                                                     'pt-BR',
                                                                 )}
                                                             </strong>
-                                                            {' — '}
+                                                            {' · '}
                                                             {history.from_status
                                                                 ?.nome ??
                                                                 'Início'}
@@ -1170,7 +1170,7 @@ export default function SalesDashboard({
                                                             {history.to_status
                                                                 ?.nome ??
                                                                 'Sem situação'}
-                                                            {' — '}
+                                                            {' · '}
                                                             {history.changed_by
                                                                 ?.name ??
                                                                 'Sistema/API ou registro inicial'}

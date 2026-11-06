@@ -14,7 +14,10 @@ use Illuminate\Support\Collection;
 
 class CommercialReportService
 {
-    public function __construct(private readonly UnitAccess $unitAccess) {}
+    public function __construct(
+        private readonly UnitAccess $unitAccess,
+        private readonly SellerScope $sellerScope,
+    ) {}
 
     /**
      * @return array{
@@ -35,13 +38,17 @@ class CommercialReportService
         $units = $this->unitAccess->availableUnits($user)
             ->when($unitId, fn (Collection $collection) => $collection->where('id', $unitId)->values());
         $unitIds = $units->modelKeys();
+        // Sellers only see their own numbers (D-025); the unit queue is not theirs yet.
+        $ownSellerIds = $this->sellerScope->applies($user) ? $this->sellerScope->sellerIds($user) : null;
         $leads = $this->unitAccess->scope(Lead::query(), $user)
+            ->when($ownSellerIds !== null, fn (Builder $query) => $query->whereIn('vendedor_id', $ownSellerIds))
             ->whereIn('unidade_id', $unitIds)
             ->whereDate('data', '>=', $start)
             ->whereDate('data', '<=', $end)
             ->when($sellerId, fn (Builder $query) => $query->where('vendedor_id', $sellerId))
             ->get(['id', 'unidade_id', 'vendedor_id']);
         $appointments = $this->unitAccess->scope(Agendamento::query(), $user)
+            ->when($ownSellerIds !== null, fn (Builder $query) => $query->whereIn('vendedor_id', $ownSellerIds))
             ->whereIn('unidade_id', $unitIds)
             ->whereDate('data', '>=', $start)
             ->whereDate('data', '<=', $end)
@@ -52,7 +59,10 @@ class CommercialReportService
             ->whereDate('data', '>=', $start)
             ->whereDate('data', '<=', $end)
             ->with(['matriculaAtiva:id,visita_id', 'lead:id,vendedor_id'])
-            ->get(['id', 'unidade_id', 'lead_id', 'vendedor_id', 'status']);
+            ->get(['id', 'unidade_id', 'lead_id', 'vendedor_id', 'status'])
+            ->when($ownSellerIds !== null, fn ($collection) => $collection->filter(
+                fn (Visita $visit): bool => in_array((int) ($visit->vendedor_id ?? $visit->lead?->vendedor_id), $ownSellerIds, true),
+            ));
 
         $salesVisits = $visits->filter(fn (Visita $visit) => in_array($visit->status, [
             'Matriculado',
@@ -60,6 +70,7 @@ class CommercialReportService
         ], true) || $visit->matriculaAtiva !== null);
         $linkedLeadIds = $salesVisits->pluck('lead_id')->filter()->unique()->all();
         $historicalSales = $this->unitAccess->scope(Lead::query(), $user)
+            ->when($ownSellerIds !== null, fn (Builder $query) => $query->whereIn('vendedor_id', $ownSellerIds))
             ->whereIn('unidade_id', $unitIds)
             ->whereHas('status', fn (Builder $query) => $query->where('nome', 'Matriculado'))
             ->where(function (Builder $query) use ($start, $end): void {
@@ -116,6 +127,7 @@ class CommercialReportService
 
         $sellers = Vendedor::query()
             ->whereIn('unidade_id', $unitIds)
+            ->when($ownSellerIds !== null, fn (Builder $query) => $query->whereIn('id', $ownSellerIds))
             ->with('unidade:id,nome')
             ->orderBy('nome')
             ->get();

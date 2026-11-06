@@ -11,6 +11,7 @@ use App\Models\Unidade;
 use App\Models\User;
 use App\Models\Vendedor;
 use App\Models\Visita;
+use App\Support\SellerScope;
 use App\Support\UnitAccess;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
@@ -40,7 +41,10 @@ class VisitaController extends Controller
         'Outros',
     ];
 
-    public function __construct(private readonly UnitAccess $unitAccess) {}
+    public function __construct(
+        private readonly UnitAccess $unitAccess,
+        private readonly SellerScope $sellerScope,
+    ) {}
 
     public function index(Request $request): Response
     {
@@ -49,7 +53,7 @@ class VisitaController extends Controller
         $units = $this->unitAccess->availableUnits($user);
         $unitId = $this->unitAccess->selectedUnitId($request, $user, $units);
 
-        $visits = $this->unitAccess->scope(Visita::query(), $user)
+        $visits = $this->sellerScope->records(Visita::query(), $user)
             ->when($unitId, fn (Builder $query) => $query->where('unidade_id', $unitId))
             ->with([
                 'unidade:id,nome',
@@ -79,6 +83,11 @@ class VisitaController extends Controller
         $user = $request->user();
         abort_unless($user instanceof User, 401);
         $this->unitAccess->ensureCanAccess($user, (int) $data['unidade_id']);
+        $data['vendedor_id'] = $this->sellerScope->resolveSellerId(
+            $user,
+            (int) $data['unidade_id'],
+            $data['vendedor_id'] ?? null,
+        );
 
         Visita::query()->create($data + [
             'fonte' => 'Manual',
@@ -93,7 +102,7 @@ class VisitaController extends Controller
     {
         $user = $request->user();
         abort_unless($user instanceof User, 401);
-        $this->unitAccess->ensureCanAccess($user, $visita->unidade_id);
+        $this->sellerScope->ensureCanAccessRecord($user, $visita);
 
         $data = $this->validatedVisitData($request, $visita);
         $this->unitAccess->ensureCanAccess($user, (int) $data['unidade_id']);
@@ -106,7 +115,7 @@ class VisitaController extends Controller
     {
         $user = $request->user();
         abort_unless($user instanceof User, 401);
-        $this->unitAccess->ensureCanAccess($user, $visita->unidade_id);
+        $this->sellerScope->ensureCanAccessRecord($user, $visita);
 
         $data = $request->validate([
             'status' => ['required', Rule::in(self::STATUSES)],
@@ -154,7 +163,7 @@ class VisitaController extends Controller
     {
         $user = $request->user();
         abort_unless($user instanceof User, 401);
-        $this->unitAccess->ensureCanAccess($user, $visita->unidade_id);
+        $this->sellerScope->ensureCanAccessRecord($user, $visita);
         $data = $request->validate([
             'turma_id' => ['nullable', 'integer', 'exists:turmas,id'],
         ]);
@@ -234,7 +243,7 @@ class VisitaController extends Controller
     {
         $user = $request->user();
         abort_unless($user instanceof User, 401);
-        $this->unitAccess->ensureCanAccess($user, $visita->unidade_id);
+        $this->sellerScope->ensureCanAccessRecord($user, $visita);
         $data = $request->validate([
             'turma_id' => ['required', 'integer', 'exists:turmas,id'],
         ]);
@@ -291,7 +300,7 @@ class VisitaController extends Controller
     {
         $user = $request->user();
         abort_unless($user instanceof User, 401);
-        $this->unitAccess->ensureCanAccess($user, $visita->unidade_id);
+        $this->sellerScope->ensureCanAccessRecord($user, $visita);
 
         DB::transaction(function () use ($visita, $user): void {
             $lockedVisit = Visita::query()->lockForUpdate()->findOrFail($visita->id);
@@ -328,7 +337,7 @@ class VisitaController extends Controller
     {
         $user = $request->user();
         abort_unless($user instanceof User, 401);
-        $this->unitAccess->ensureCanAccess($user, $visita->unidade_id);
+        $this->sellerScope->ensureCanAccessRecord($user, $visita);
 
         $deleted = DB::transaction(function () use ($visita): bool {
             $lockedVisit = Visita::query()->lockForUpdate()->findOrFail($visita->id);

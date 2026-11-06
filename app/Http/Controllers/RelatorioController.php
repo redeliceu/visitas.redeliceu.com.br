@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Models\Vendedor;
 use App\Support\CommercialReportPdf;
 use App\Support\CommercialReportService;
+use App\Support\SellerScope;
 use App\Support\UnitAccess;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -15,7 +16,10 @@ use Inertia\Response;
 
 class RelatorioController extends Controller
 {
-    public function __construct(private readonly UnitAccess $unitAccess) {}
+    public function __construct(
+        private readonly UnitAccess $unitAccess,
+        private readonly SellerScope $sellerScope,
+    ) {}
 
     public function index(Request $request, CommercialReportService $reportService): Response
     {
@@ -136,6 +140,10 @@ class RelatorioController extends Controller
                 ->whereKey($sellerId)
                 ->whereIn('unidade_id', $units->modelKeys())
                 ->when($unitId, fn (Builder $query) => $query->where('unidade_id', $unitId))
+                ->when(
+                    $this->sellerScope->applies($user),
+                    fn (Builder $query) => $query->whereIn('id', $this->sellerScope->sellerIds($user)),
+                )
                 ->exists();
             abort_unless($sellerAllowed, 404);
         }

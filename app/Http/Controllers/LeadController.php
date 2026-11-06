@@ -11,6 +11,8 @@ use App\Models\Turno;
 use App\Models\Unidade;
 use App\Models\User;
 use App\Models\Vendedor;
+use App\Support\LeadAssignment;
+use App\Support\SellerScope;
 use App\Support\UnitAccess;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
@@ -22,7 +24,11 @@ use Inertia\Response;
 
 class LeadController extends Controller
 {
-    public function __construct(private readonly UnitAccess $unitAccess) {}
+    public function __construct(
+        private readonly UnitAccess $unitAccess,
+        private readonly SellerScope $sellerScope,
+        private readonly LeadAssignment $assignment,
+    ) {}
 
     public function index(Request $request): Response
     {
@@ -32,7 +38,7 @@ class LeadController extends Controller
         $unitId = $this->unitAccess->selectedUnitId($request, $user, $units);
         $sellers = $this->sellersFor($user);
 
-        $leads = $this->unitAccess->scope(Lead::query(), $user)
+        $leads = $this->sellerScope->leads(Lead::query(), $user)
             ->when($unitId, fn (Builder $query) => $query->where('unidade_id', $unitId))
             ->with([
                 'unidade:id,nome',
@@ -58,6 +64,8 @@ class LeadController extends Controller
             'units' => $units->map(fn (Unidade $unit) => ['id' => $unit->id, 'nome' => $unit->nome]),
             'selectedUnitId' => $unitId,
             'sellers' => $sellers,
+            'currentSellerIds' => $this->sellerScope->sellerIds($user),
+            'sellerScoped' => $this->sellerScope->applies($user),
             'statuses' => LeadStatus::query()->where('ativo', true)->orderBy('ordem')->get(['id', 'nome']),
             'series' => Serie::query()->where('ativo', true)->orderBy('nome')->get(['id', 'nome']),
             'cycles' => Ciclo::query()->where('ativo', true)->orderBy('nome')->get(['id', 'nome']),
@@ -71,6 +79,11 @@ class LeadController extends Controller
         $user = $request->user();
         abort_unless($user instanceof User, 401);
         $this->unitAccess->ensureCanAccess($user, (int) $data['unidade_id']);
+        $data['vendedor_id'] = $this->sellerScope->resolveSellerId(
+            $user,
+            (int) $data['unidade_id'],
+            $data['vendedor_id'] ?? null,
+        );
 
         DB::transaction(fn () => Lead::query()->create($data));
 
@@ -81,9 +94,14 @@ class LeadController extends Controller
     {
         $user = $request->user();
         abort_unless($user instanceof User, 401);
-        $this->unitAccess->ensureCanAccess($user, $lead->unidade_id);
+        $this->sellerScope->ensureCanAccessLead($user, $lead);
         $data = $this->validatedLeadData($request);
         $this->unitAccess->ensureCanAccess($user, (int) $data['unidade_id']);
+        $data['vendedor_id'] = $this->sellerScope->resolveSellerId(
+            $user,
+            (int) $data['unidade_id'],
+            $data['vendedor_id'] ?? null,
+        );
 
         DB::transaction(function () use ($lead, $data, $user): void {
             $lockedLead = Lead::query()->lockForUpdate()->findOrFail($lead->id);
@@ -125,7 +143,15 @@ class LeadController extends Controller
                 ];
             }
 
+            $sellerChanged = $lockedLead->isDirty('vendedor_id');
             $lockedLead->save();
+
+            if ($sellerChanged) {
+                $this->assignment->moveOpenAppointments(
+                    $lockedLead,
+                    $lockedLead->vendedor_id === null ? null : (int) $lockedLead->vendedor_id,
+                );
+            }
 
             if ($changes !== []) {
                 LeadHistory::query()->create([
@@ -144,15 +170,23 @@ class LeadController extends Controller
     {
         $user = $request->user();
         abort_unless($user instanceof User, 401);
-        $this->unitAccess->ensureCanAccess($user, $lead->unidade_id);
+        $this->sellerScope->ensureCanAccessLead($user, $lead);
 
         $data = $request->validate([
             'data' => ['required', 'date'],
             'horario' => ['required', 'date_format:H:i'],
         ]);
 
-        DB::transaction(function () use ($lead, $data): void {
+        DB::transaction(function () use ($lead, $data, $user): void {
             $lockedLead = Lead::query()->lockForUpdate()->findOrFail($lead->id);
+
+            if ($lockedLead->vendedor_id === null) {
+                $ownSellerId = $this->sellerScope->resolveSellerId($user, $lockedLead->unidade_id, null);
+
+                if ($ownSellerId !== null) {
+                    $this->assignment->assign($lockedLead, $ownSellerId, $user);
+                }
+            }
 
             $lockedLead->agendamento()->create([
                 'unidade_id' => $lockedLead->unidade_id,
@@ -175,7 +209,77 @@ class LeadController extends Controller
             }
         });
 
+        // The seller panel schedules from a modal and stays on the page (D-032).
+        if ($request->boolean('permanecer')) {
+            return back()->with('success', 'Visita agendada.');
+        }
+
         return redirect()->route('agendamentos.index')->with('success', 'Visita agendada.');
+    }
+
+    public function transfer(Request $request, Lead $lead): RedirectResponse
+    {
+        $user = $request->user();
+        abort_unless($user instanceof User, 401);
+        $this->sellerScope->ensureCanAccessLead($user, $lead);
+
+        $data = $request->validate([
+            'vendedor_id' => [
+                'required',
+                'integer',
+                Rule::exists('vendedores', 'id')->where(fn ($query) => $query
+                    ->where('ativo', true)
+                    ->where('unidade_id', $lead->unidade_id)),
+            ],
+            'motivo' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $transferred = DB::transaction(function () use ($lead, $data, $user): bool {
+            $lockedLead = Lead::query()->lockForUpdate()->findOrFail($lead->id);
+
+            return $this->assignment->assign(
+                $lockedLead,
+                (int) $data['vendedor_id'],
+                $user,
+                $data['motivo'] ?? null,
+            );
+        });
+
+        if (! $transferred) {
+            return back()->withErrors([
+                'vendedor_id' => 'O lead já está com este vendedor.',
+            ]);
+        }
+
+        return back()->with('success', 'Lead transferido.');
+    }
+
+    public function claim(Request $request, Lead $lead): RedirectResponse
+    {
+        $user = $request->user();
+        abort_unless($user instanceof User, 401);
+        abort_unless($this->sellerScope->applies($user), 403);
+        $this->sellerScope->ensureCanAccessLead($user, $lead);
+        $sellerId = $this->sellerScope->ownSellerIdForUnit($user, $lead->unidade_id);
+        abort_if($sellerId === null, 403);
+
+        $claimed = DB::transaction(function () use ($lead, $sellerId, $user): bool {
+            $lockedLead = Lead::query()->lockForUpdate()->findOrFail($lead->id);
+
+            if ($lockedLead->vendedor_id !== null) {
+                return false;
+            }
+
+            return $this->assignment->assign($lockedLead, $sellerId, $user);
+        });
+
+        if (! $claimed) {
+            return back()->withErrors([
+                'lead' => 'Este lead já foi assumido por outro vendedor.',
+            ]);
+        }
+
+        return back()->with('success', 'Lead assumido.');
     }
 
     /**

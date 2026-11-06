@@ -125,6 +125,14 @@ class Lead extends Model
             ->orderByDesc('id');
     }
 
+    /** @return HasMany<LeadFollowUp, $this> */
+    public function followUps(): HasMany
+    {
+        return $this->hasMany(LeadFollowUp::class)
+            ->orderByDesc('created_at')
+            ->orderByDesc('id');
+    }
+
     /** @return HasMany<Visita, $this> */
     public function visitas(): HasMany
     {

@@ -8,6 +8,7 @@ use App\Models\Unidade;
 use App\Models\User;
 use App\Models\Vendedor;
 use App\Support\CommercialReportService;
+use App\Support\SellerScope;
 use App\Support\UnitAccess;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
@@ -20,7 +21,10 @@ use Inertia\Response;
 
 class CampanhaController extends Controller
 {
-    public function __construct(private readonly UnitAccess $unitAccess) {}
+    public function __construct(
+        private readonly UnitAccess $unitAccess,
+        private readonly SellerScope $sellerScope,
+    ) {}
 
     public function index(Request $request, CommercialReportService $reportService): Response
     {
@@ -36,7 +40,9 @@ class CampanhaController extends Controller
             ->keyBy('unidade_id');
         $today = now()->toDateString();
         $visibleUnits = $unitId ? $units->where('id', $unitId)->values() : $units;
-        $unitData = $visibleUnits->map(function (Unidade $unit) use ($campaigns, $reportService, $user, $today): array {
+        // Sellers only see their own goal and progress (D-025).
+        $ownSellerIds = $this->sellerScope->applies($user) ? $this->sellerScope->sellerIds($user) : null;
+        $unitData = $visibleUnits->map(function (Unidade $unit) use ($campaigns, $reportService, $user, $today, $ownSellerIds): array {
             /** @var Campanha|null $campaign */
             $campaign = $campaigns->get($unit->id);
             $summary = ['leads' => 0, 'appointments' => 0, 'visits' => 0, 'sales' => 0];
@@ -59,6 +65,7 @@ class CampanhaController extends Controller
             $sellers = Vendedor::query()
                 ->where('unidade_id', $unit->id)
                 ->where('ativo', true)
+                ->when($ownSellerIds !== null, fn (Builder $query) => $query->whereIn('id', $ownSellerIds))
                 ->orderBy('nome')
                 ->get(['id', 'nome'])
                 ->map(fn (Vendedor $seller): array => [
@@ -77,7 +84,11 @@ class CampanhaController extends Controller
                     'unidade_id' => $campaign->unidade_id,
                     'inicio' => $campaign->inicio?->toDateString(),
                     'fim' => $campaign->fim?->toDateString(),
-                    'meta' => $campaign->meta,
+                    'meta' => $ownSellerIds === null
+                        ? $campaign->meta
+                        : ($campaign->metasVendedores
+                            ->whereIn('vendedor_id', $ownSellerIds)
+                            ->sum('meta') ?: null),
                 ] : null,
                 'sellers' => $sellers,
                 'summary' => $summary,
