@@ -253,6 +253,39 @@ class AccessControlTest extends TestCase
         $this->assertFalse($firstSeller->fresh()->ativo);
     }
 
+    public function test_editing_an_account_with_a_blank_password_keeps_the_current_one(): void
+    {
+        $master = User::factory()->create(['role' => User::ROLE_MASTER]);
+        $unit = Unidade::query()->create(['nome' => 'Unidade Norte']);
+        $user = User::factory()->create([
+            'role' => User::ROLE_ATENDIMENTO,
+            'email' => 'atendimento@example.test',
+            'password' => 'Senha-original-123',
+        ]);
+        $user->unidades()->sync([$unit->id]);
+        $data = [
+            'email' => $user->email,
+            'role' => User::ROLE_ATENDIMENTO,
+            'ativo' => true,
+            'unit_ids' => [$unit->id],
+        ];
+
+        // The form always sends the field; empty means "keep the password".
+        $this->actingAs($master)
+            ->put(route('admin.users.update', $user), [...$data, 'name' => 'Nome Novo', 'password' => ''])
+            ->assertSessionHasNoErrors()
+            ->assertRedirect();
+
+        $this->assertSame('Nome Novo', $user->vendedores()->value('nome'));
+        $this->assertTrue(Hash::check('Senha-original-123', $user->fresh()->password));
+
+        $this->actingAs($master)
+            ->put(route('admin.users.update', $user), [...$data, 'name' => 'Nome Novo', 'password' => 'Senha-trocada-456'])
+            ->assertSessionHasNoErrors();
+
+        $this->assertTrue(Hash::check('Senha-trocada-456', $user->fresh()->password));
+    }
+
     public function test_master_account_cannot_be_removed_as_the_last_active_master(): void
     {
         $master = User::factory()->create(['role' => User::ROLE_MASTER]);
