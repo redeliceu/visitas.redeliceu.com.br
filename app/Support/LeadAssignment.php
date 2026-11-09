@@ -20,9 +20,10 @@ class LeadAssignment
     public const REASON_FIELD = 'Motivo da transferência';
 
     /**
-     * Must run inside a transaction with the lead locked for update.
+     * Must run inside a transaction with the lead locked for update. A null
+     * user means an automatic change, such as the SellFlux sync (D-040).
      */
-    public function assign(Lead $lead, ?int $sellerId, User $user, ?string $reason = null): bool
+    public function assign(Lead $lead, ?int $sellerId, ?User $user, ?string $reason = null): bool
     {
         $previousSellerId = $lead->vendedor_id === null ? null : (int) $lead->vendedor_id;
 
@@ -48,7 +49,7 @@ class LeadAssignment
 
         LeadHistory::query()->create([
             'lead_id' => $lead->id,
-            'user_id' => $user->id,
+            'user_id' => $user?->id,
             'changes' => $changes,
             'created_at' => now(),
         ]);

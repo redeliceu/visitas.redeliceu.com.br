@@ -1116,7 +1116,7 @@ export default function SalesDashboard({
                                                             {' · '}
                                                             {history.user
                                                                 ?.name ??
-                                                                'Usuário removido'}
+                                                                'Sistema ou usuário removido'}
                                                             <ul>
                                                                 {history.changes.map(
                                                                     (

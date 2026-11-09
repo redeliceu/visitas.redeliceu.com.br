@@ -50,9 +50,7 @@ class SellFluxAttendants
                 $id = data_get($chat, 'user_attending.id');
                 $name = data_get($chat, 'user_attending.name');
 
-                if ((is_int($id) || is_string($id)) && is_string($name) && trim($name) !== '') {
-                    $new += $this->record($unit, (string) $id, $name) ? 1 : 0;
-                }
+                $new += $this->remember($unit, $id, $name) ? 1 : 0;
             }
 
             if (count($chats) < self::CHATS_PER_PAGE) {
@@ -227,6 +225,20 @@ class SellFluxAttendants
             'vendedor_id' => $sellerId,
             'alterado_por' => $user->id,
         ])->save();
+    }
+
+    /**
+     * Records an attendant seen on a chat. New ones stay pending.
+     *
+     * @return bool whether the attendant is new
+     */
+    public function remember(Unidade $unit, mixed $sellfluxUserId, mixed $name): bool
+    {
+        if ((! is_int($sellfluxUserId) && ! is_string($sellfluxUserId)) || ! is_string($name) || trim($name) === '') {
+            return false;
+        }
+
+        return $this->record($unit, (string) $sellfluxUserId, $name);
     }
 
     /**
