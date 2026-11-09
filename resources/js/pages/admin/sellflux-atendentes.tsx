@@ -1,5 +1,10 @@
-import { Head, Link, router, usePage } from '@inertiajs/react';
+import { Link, router, usePage } from '@inertiajs/react';
+import type { FormEvent } from 'react';
 import { useState } from 'react';
+import ConfirmDialog from '@/components/visitas/ConfirmDialog';
+import RecordModal from '@/components/visitas/RecordModal';
+import VisitLayout from '@/components/visitas/VisitLayout';
+import type { Auth } from '@/types/auth';
 
 type Seller = {
     id: number;
@@ -13,10 +18,11 @@ type Suggestion =
     | { tipo: 'criar' }
     | { tipo: 'bloqueado'; motivo: string }
     | null;
+type Situation = 'pendente' | 'associado' | 'ignorado';
 type Attendant = {
     id: number;
     nome: string;
-    situacao: 'pendente' | 'associado' | 'ignorado';
+    situacao: Situation;
     vendedor_id: number | null;
     vendedor_nome: string | null;
     vendedor_ativo: boolean | null;
@@ -34,12 +40,15 @@ type Props = {
     sellers: Seller[];
     atendentes: Attendant[];
 };
-type SharedProps = {
-    flash?: { success?: string | null; warning?: string | null };
-    errors?: Record<string, string>;
-};
 
 const NEW_SELLER = 'criar';
+
+const tabs: Array<{ key: Situation | 'todos'; label: string }> = [
+    { key: 'pendente', label: 'Pendentes' },
+    { key: 'associado', label: 'Associados' },
+    { key: 'ignorado', label: 'Ignorados' },
+    { key: 'todos', label: 'Todos' },
+];
 
 function initialChoice(attendant: Attendant): string {
     if (attendant.vendedor_id) {
@@ -53,203 +62,197 @@ function initialChoice(attendant: Attendant): string {
     return attendant.sugestao?.tipo === 'criar' ? NEW_SELLER : '';
 }
 
-function suggestionText(
-    attendant: Attendant,
-    sellers: Seller[],
-): string | null {
+function SuggestionNote({
+    attendant,
+    sellers,
+}: {
+    attendant: Attendant;
+    sellers: Seller[];
+}) {
     const suggestion = attendant.sugestao;
 
-    if (suggestion?.tipo === 'criar') {
-        return 'Sugestão: criar um vendedor novo para esta pessoa.';
+    if (attendant.situacao !== 'pendente' || !suggestion) {
+        return null;
     }
 
-    if (suggestion?.tipo === 'bloqueado') {
-        return `Existe um cadastro inativo com este nome, mas não dá para reativá-lo aqui: ${suggestion.motivo}.`;
-    }
-
-    if (suggestion?.tipo === 'vendedor') {
-        const seller = sellers.find(
-            (item) => item.id === suggestion.vendedor_id,
+    if (suggestion.tipo === 'bloqueado') {
+        return (
+            <div className="es-sub adm-warn-text">
+                Cadastro inativo com este nome não pode ser reativado:{' '}
+                {suggestion.motivo}
+            </div>
         );
-
-        return suggestion.reativar
-            ? `Sugestão: reativar ${seller?.nome} e associar.`
-            : `Sugestão pelo nome: ${seller?.nome}.`;
     }
 
-    return null;
+    const text =
+        suggestion.tipo === 'criar'
+            ? 'Sugestão: criar vendedor novo'
+            : `Sugestão: ${suggestion.reativar ? 'reativar ' : ''}${sellers.find((seller) => seller.id === suggestion.vendedor_id)?.nome ?? ''}`;
+
+    return (
+        <div className="es-sub adm-suggestion">
+            <i className="fas fa-wand-magic-sparkles" aria-hidden="true" />{' '}
+            {text}
+        </div>
+    );
 }
 
-function AttendantRow({
+function AssociateModal({
     attendant,
     sellers,
     updateUrl,
-    disabled,
+    onClose,
 }: {
     attendant: Attendant;
     sellers: Seller[];
     updateUrl: string;
-    disabled: boolean;
+    onClose: () => void;
 }) {
     const [choice, setChoice] = useState(initialChoice(attendant));
     const [newName, setNewName] = useState(attendant.nome);
     const [saving, setSaving] = useState(false);
-    const activeSellers = sellers.filter((seller) => seller.ativo);
-    const inactiveSellers = sellers.filter((seller) => !seller.ativo);
-    const chosenSeller = sellers.find((seller) => String(seller.id) === choice);
-    const hint = suggestionText(attendant, sellers);
+    const { errors } = usePage<{ errors?: Record<string, string> }>().props;
+    const suggestedId =
+        attendant.sugestao?.tipo === 'vendedor'
+            ? attendant.sugestao.vendedor_id
+            : null;
+    const chosen = sellers.find((seller) => String(seller.id) === choice);
+    const active = sellers.filter((seller) => seller.ativo);
+    const inactive = sellers.filter((seller) => !seller.ativo);
 
-    function send(data: Record<string, string | number>) {
+    function submit(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        const data =
+            choice === NEW_SELLER
+                ? { acao: 'criar', nome: newName }
+                : { acao: 'associar', vendedor_id: Number(choice) };
+
         router.put(updateUrl, data, {
             preserveScroll: true,
             onStart: () => setSaving(true),
             onFinish: () => setSaving(false),
+            onSuccess: onClose,
         });
     }
 
-    function save() {
-        if (choice === NEW_SELLER) {
-            send({ acao: 'criar', nome: newName });
-        } else if (choice !== '') {
-            send({ acao: 'associar', vendedor_id: Number(choice) });
-        }
+    function option(seller: Seller) {
+        const blocked = !seller.ativo && seller.bloqueio_reativacao !== null;
+
+        return (
+            <label
+                className={`adm-option${choice === String(seller.id) ? ' selected' : ''}${blocked ? ' disabled' : ''}`}
+                key={seller.id}
+            >
+                <input
+                    checked={choice === String(seller.id)}
+                    disabled={blocked}
+                    name="vendedor"
+                    onChange={() => setChoice(String(seller.id))}
+                    type="radio"
+                />
+                <span>
+                    <strong>
+                        {seller.nome}
+                        {seller.id === suggestedId && (
+                            <span className="es-pill purple">sugerido</span>
+                        )}
+                    </strong>
+                    <small>
+                        {blocked
+                            ? `Não pode ser reativado: ${seller.bloqueio_reativacao}`
+                            : !seller.ativo
+                              ? 'Inativo: será reativado ao salvar'
+                              : seller.tem_conta
+                                ? 'Ativo, com conta de acesso'
+                                : 'Ativo, ainda sem conta de acesso'}
+                    </small>
+                </span>
+            </label>
+        );
     }
 
-    const blocked = disabled || saving;
-    const unchanged =
-        attendant.situacao === 'associado' &&
-        choice === String(attendant.vendedor_id);
+    const submitLabel =
+        choice === NEW_SELLER
+            ? 'Criar e associar'
+            : chosen && !chosen.ativo
+              ? 'Reativar e associar'
+              : 'Associar';
 
     return (
-        <li className="space-y-3 border-b border-slate-200 py-4 last:border-b-0">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                    <p className="font-medium text-slate-900">
-                        {attendant.nome}
-                    </p>
-                    {attendant.visto_em && (
-                        <p className="text-xs text-slate-500">
-                            Visto em {attendant.visto_em}
-                        </p>
-                    )}
-                </div>
-                {attendant.situacao === 'pendente' && (
-                    <span className="rounded bg-amber-100 px-2 py-1 text-xs text-amber-900">
-                        Pendente
-                    </span>
-                )}
-                {attendant.situacao === 'associado' && (
-                    <span className="rounded bg-emerald-100 px-2 py-1 text-xs text-emerald-900">
-                        Associado a {attendant.vendedor_nome}
-                    </span>
-                )}
-                {attendant.situacao === 'ignorado' && (
-                    <span className="rounded bg-slate-200 px-2 py-1 text-xs text-slate-700">
-                        Ignorado
-                    </span>
-                )}
-            </div>
-            {attendant.situacao === 'associado' &&
-                attendant.vendedor_ativo === false && (
-                    <p className="text-sm text-red-700">
-                        Este vendedor está inativo. Leads deste atendente não
-                        serão vinculados até ele ser reativado ou trocado.
-                    </p>
-                )}
-            {hint && <p className="text-sm text-slate-600">{hint}</p>}
-            <div className="flex flex-wrap items-end gap-2">
-                <label className="min-w-56 flex-1 text-sm font-medium text-slate-700">
-                    Vendedor
-                    <select
-                        aria-label={`Vendedor de ${attendant.nome}`}
-                        className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 font-normal"
-                        disabled={blocked}
-                        onChange={(event) => setChoice(event.target.value)}
-                        value={choice}
-                    >
-                        <option value="">Selecione</option>
-                        {activeSellers.length > 0 && (
-                            <optgroup label="Vendedores ativos">
-                                {activeSellers.map((seller) => (
-                                    <option key={seller.id} value={seller.id}>
-                                        {seller.nome}
-                                        {seller.tem_conta ? '' : ' (sem conta)'}
-                                    </option>
-                                ))}
-                            </optgroup>
-                        )}
-                        {inactiveSellers.length > 0 && (
-                            <optgroup label="Inativos (reativa ao salvar)">
-                                {inactiveSellers.map((seller) => (
-                                    <option
-                                        disabled={
-                                            seller.bloqueio_reativacao !== null
-                                        }
-                                        key={seller.id}
-                                        value={seller.id}
-                                    >
-                                        {seller.nome}
-                                        {seller.bloqueio_reativacao
-                                            ? ` (${seller.bloqueio_reativacao})`
-                                            : ''}
-                                    </option>
-                                ))}
-                            </optgroup>
-                        )}
-                        <option value={NEW_SELLER}>Criar vendedor novo</option>
-                    </select>
-                </label>
-                {choice === NEW_SELLER && (
-                    <label className="min-w-56 flex-1 text-sm font-medium text-slate-700">
-                        Nome do novo vendedor
-                        <input
-                            className="mt-1 w-full rounded border border-slate-300 px-3 py-2 font-normal"
-                            disabled={blocked}
-                            maxLength={255}
-                            onChange={(event) => setNewName(event.target.value)}
-                            value={newName}
-                        />
-                    </label>
-                )}
-                <button
-                    className="rounded bg-blue-800 px-4 py-2 text-white disabled:opacity-50"
-                    disabled={
-                        blocked ||
-                        choice === '' ||
-                        unchanged ||
-                        (choice === NEW_SELLER && newName.trim() === '')
-                    }
-                    onClick={save}
-                    type="button"
+        <RecordModal
+            className="adm-modal"
+            onClose={onClose}
+            onSubmit={submit}
+            processing={saving}
+            submitDisabled={
+                choice === '' ||
+                (choice === NEW_SELLER && newName.trim() === '')
+            }
+            submitLabel={submitLabel}
+            title={`Associar ${attendant.nome}`}
+        >
+            <p className="adm-span es-sub">
+                Os leads atendidos por esta pessoa na SellFlux serão vinculados
+                ao vendedor escolhido.
+            </p>
+            {active.length > 0 && (
+                <>
+                    <p className="adm-section-title">Vendedores ativos</p>
+                    <div className="adm-span adm-options">
+                        {active.map(option)}
+                    </div>
+                </>
+            )}
+            {inactive.length > 0 && (
+                <>
+                    <p className="adm-section-title">Vendedores inativos</p>
+                    <div className="adm-span adm-options">
+                        {inactive.map(option)}
+                    </div>
+                </>
+            )}
+            <p className="adm-section-title">Ou</p>
+            <div className="adm-span adm-options">
+                <label
+                    className={`adm-option${choice === NEW_SELLER ? ' selected' : ''}`}
                 >
-                    {chosenSeller && !chosenSeller.ativo
-                        ? 'Reativar e associar'
-                        : choice === NEW_SELLER
-                          ? 'Criar e associar'
-                          : 'Associar'}
-                </button>
-                {attendant.situacao !== 'ignorado' && (
-                    <button
-                        className="rounded border border-slate-300 px-4 py-2 disabled:opacity-50"
-                        disabled={blocked}
-                        onClick={() => send({ acao: 'ignorar' })}
-                        type="button"
-                    >
-                        Ignorar
-                    </button>
-                )}
-                {attendant.situacao !== 'pendente' && (
-                    <button
-                        className="rounded border border-slate-300 px-4 py-2 disabled:opacity-50"
-                        disabled={blocked}
-                        onClick={() => send({ acao: 'desfazer' })}
-                        type="button"
-                    >
-                        Desfazer
-                    </button>
-                )}
+                    <input
+                        checked={choice === NEW_SELLER}
+                        name="vendedor"
+                        onChange={() => setChoice(NEW_SELLER)}
+                        type="radio"
+                    />
+                    <span>
+                        <strong>
+                            Criar vendedor novo
+                            {attendant.sugestao?.tipo === 'criar' && (
+                                <span className="es-pill purple">sugerido</span>
+                            )}
+                        </strong>
+                        <small>
+                            Nasce sem conta; uma conta pode ser vinculada depois
+                            em Usuários.
+                        </small>
+                    </span>
+                </label>
             </div>
-        </li>
+            {choice === NEW_SELLER && (
+                <label className="adm-span">
+                    Nome do novo vendedor
+                    <input
+                        autoFocus
+                        maxLength={255}
+                        onChange={(event) => setNewName(event.target.value)}
+                        value={newName}
+                    />
+                </label>
+            )}
+            {(errors?.vendedor_id || errors?.nome) && (
+                <span className="adm-span field-error">
+                    {errors.vendedor_id ?? errors.nome}
+                </span>
+            )}
+        </RecordModal>
     );
 }
 
@@ -259,9 +262,30 @@ export default function SellfluxAtendentes({
     sellers,
     atendentes,
 }: Props) {
-    const { flash, errors } = usePage<SharedProps>().props;
+    const { auth } = usePage<{ auth: Auth }>().props;
+    const counts = {
+        pendente: atendentes.filter((item) => item.situacao === 'pendente')
+            .length,
+        associado: atendentes.filter((item) => item.situacao === 'associado')
+            .length,
+        ignorado: atendentes.filter((item) => item.situacao === 'ignorado')
+            .length,
+        todos: atendentes.length,
+    };
+    const [tab, setTab] = useState<Situation | 'todos'>(
+        counts.pendente > 0 ? 'pendente' : 'todos',
+    );
     const [syncing, setSyncing] = useState(false);
-    const errorMessages = Object.values(errors ?? {});
+    const [associating, setAssociating] = useState<Attendant | null>(null);
+    const [undoing, setUndoing] = useState<Attendant | null>(null);
+    const [busyId, setBusyId] = useState<number | null>(null);
+    const visible =
+        tab === 'todos'
+            ? atendentes
+            : atendentes.filter((item) => item.situacao === tab);
+    const readOnly = !unit.ativo;
+    const updateUrl = (attendant: Attendant) =>
+        `/admin/units/${unit.id}/atendentes/${attendant.id}`;
 
     function sync() {
         router.post(
@@ -275,97 +299,324 @@ export default function SellfluxAtendentes({
         );
     }
 
+    function send(attendant: Attendant, acao: string) {
+        router.put(
+            updateUrl(attendant),
+            { acao },
+            {
+                preserveScroll: true,
+                onStart: () => setBusyId(attendant.id),
+                onFinish: () => {
+                    setBusyId(null);
+                    setUndoing(null);
+                },
+            },
+        );
+    }
+
     return (
-        <>
-            <Head title={`Atendentes SellFlux: ${unit.nome}`} />
-            <main className="min-h-screen bg-slate-100">
-                <header className="flex items-center justify-between bg-blue-900 px-6 py-4 text-white">
-                    <div>
-                        <h1 className="text-xl font-semibold">
-                            Atendentes da SellFlux: {unit.nome}
-                        </h1>
-                        <Link
-                            className="text-sm text-blue-100 underline"
-                            href="/admin/units"
-                        >
-                            Voltar às unidades
-                        </Link>
+        <VisitLayout
+            active="admin-units"
+            auth={auth}
+            selectedUnitId={null}
+            title={`Atendentes: ${unit.nome}`}
+            units={[]}
+        >
+            <Link className="adm-back" href="/admin/units">
+                <i className="fas fa-arrow-left" aria-hidden="true" /> Unidades
+            </Link>
+            <div className="es-header">
+                <div>
+                    <h1>Atendentes da SellFlux</h1>
+                    <div className="es-sub">
+                        {unit.nome} · ligue quem atende na SellFlux aos
+                        vendedores do sistema
                     </div>
-                </header>
-                <section className="mx-auto max-w-5xl space-y-4 px-6 py-8">
-                    {flash?.success && (
-                        <p className="rounded bg-emerald-100 px-4 py-3 text-sm text-emerald-900">
-                            {flash.success}
-                        </p>
-                    )}
-                    {flash?.warning && (
-                        <p className="rounded bg-amber-100 px-4 py-3 text-sm text-amber-900">
-                            {flash.warning}
-                        </p>
-                    )}
-                    {errorMessages.map((message) => (
-                        <p
-                            className="rounded bg-red-100 px-4 py-3 text-sm text-red-800"
-                            key={message}
+                </div>
+                <div className="es-header-actions">
+                    <button
+                        className="btn btn-primary"
+                        disabled={
+                            syncing || readOnly || !unit.sellflux_configurado
+                        }
+                        onClick={sync}
+                        type="button"
+                    >
+                        <i
+                            className={`fas fa-rotate${syncing ? ' fa-spin' : ''}`}
+                            aria-hidden="true"
+                        />{' '}
+                        {syncing
+                            ? 'Buscando na SellFlux...'
+                            : 'Atualizar lista'}
+                    </button>
+                </div>
+            </div>
+
+            {semVendedorAtivo && (
+                <div className="visit-notice warning">
+                    Esta unidade não tem vendedor ativo. Ao associar, reative um
+                    vendedor inativo ou crie um novo; sem isso, os leads não têm
+                    a quem ser vinculados.
+                </div>
+            )}
+            {readOnly && (
+                <div className="visit-notice warning">
+                    Unidade arquivada: a lista pode ser consultada, mas não
+                    alterada.
+                </div>
+            )}
+
+            <div className="es-grid adm-stats">
+                <div className="es-stat">
+                    <small>Pendentes</small>
+                    <strong>{counts.pendente}</strong>
+                </div>
+                <div className="es-stat">
+                    <small>Associados</small>
+                    <strong>{counts.associado}</strong>
+                </div>
+                <div className="es-stat">
+                    <small>Ignorados</small>
+                    <strong>{counts.ignorado}</strong>
+                </div>
+                <div className="es-stat">
+                    <small>Vendedores ativos</small>
+                    <strong>
+                        {sellers.filter((seller) => seller.ativo).length}
+                    </strong>
+                </div>
+            </div>
+
+            <section className="es-panel">
+                <div className="adm-tabs" role="tablist">
+                    {tabs.map((item) => (
+                        <button
+                            aria-selected={tab === item.key}
+                            className={tab === item.key ? 'active' : ''}
+                            key={item.key}
+                            onClick={() => setTab(item.key)}
+                            role="tab"
+                            type="button"
                         >
-                            {message}
-                        </p>
+                            {item.label}
+                            <span className="adm-badge muted">
+                                {counts[item.key]}
+                            </span>
+                        </button>
                     ))}
-                    {semVendedorAtivo && (
-                        <p className="rounded bg-amber-100 px-4 py-3 text-sm text-amber-900">
-                            Esta unidade não tem vendedor ativo. Para cada
-                            atendente, reative um vendedor inativo ou crie um
-                            novo. Sem isso, os leads dela não têm a quem ser
-                            vinculados.
+                </div>
+
+                {atendentes.length === 0 ? (
+                    <div className="es-empty">
+                        <i
+                            className="fas fa-headset adm-empty-icon"
+                            aria-hidden="true"
+                        />
+                        <p>Nenhum atendente na lista ainda.</p>
+                        <p className="es-sub">
+                            Clique em Atualizar lista para buscar quem atende
+                            nos chats desta unidade.
                         </p>
-                    )}
-                    <div className="rounded-lg bg-white p-5 shadow-sm">
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                                <h2 className="text-lg font-semibold text-slate-900">
-                                    Quem atende nesta unidade
-                                </h2>
-                                <p className="text-sm text-slate-600">
-                                    Leads só são vinculados a atendentes
-                                    associados aqui. Quem não é vendedor pode
-                                    ser ignorado.
-                                </p>
-                            </div>
-                            <button
-                                className="rounded bg-blue-800 px-4 py-2 text-white disabled:opacity-50"
-                                disabled={
-                                    syncing ||
-                                    !unit.ativo ||
-                                    !unit.sellflux_configurado
-                                }
-                                onClick={sync}
-                                type="button"
-                            >
-                                {syncing ? 'Atualizando...' : 'Atualizar lista'}
-                            </button>
-                        </div>
-                        {atendentes.length === 0 ? (
-                            <p className="mt-4 text-sm text-slate-600">
-                                Nenhum atendente na lista. Clique em Atualizar
-                                lista para buscar quem está atendendo na
-                                SellFlux.
-                            </p>
-                        ) : (
-                            <ul className="mt-2">
-                                {atendentes.map((attendant) => (
-                                    <AttendantRow
-                                        attendant={attendant}
-                                        disabled={!unit.ativo}
-                                        key={`${attendant.id}-${attendant.situacao}-${attendant.vendedor_id}`}
-                                        sellers={sellers}
-                                        updateUrl={`/admin/units/${unit.id}/atendentes/${attendant.id}`}
-                                    />
-                                ))}
-                            </ul>
-                        )}
                     </div>
-                </section>
-            </main>
-        </>
+                ) : visible.length === 0 ? (
+                    <div className="es-empty">
+                        {tab === 'pendente'
+                            ? 'Nenhum atendente pendente. Tudo associado ou ignorado.'
+                            : 'Nenhum atendente nesta aba.'}
+                    </div>
+                ) : (
+                    <div className="es-table-wrap">
+                        <table className="es-table adm-table">
+                            <thead>
+                                <tr>
+                                    <th>Atendente</th>
+                                    <th>Situação</th>
+                                    <th>Vendedor no sistema</th>
+                                    <th aria-label="Ações" />
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {visible.map((attendant) => (
+                                    <tr key={attendant.id}>
+                                        <td>
+                                            <div className="adm-person">
+                                                <span className="adm-avatar">
+                                                    {attendant.nome
+                                                        .charAt(0)
+                                                        .toUpperCase()}
+                                                </span>
+                                                <div>
+                                                    <strong>
+                                                        {attendant.nome}
+                                                    </strong>
+                                                    {attendant.visto_em && (
+                                                        <div className="es-sub">
+                                                            Visto em{' '}
+                                                            {attendant.visto_em}
+                                                        </div>
+                                                    )}
+                                                    <SuggestionNote
+                                                        attendant={attendant}
+                                                        sellers={sellers}
+                                                    />
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td data-label="Situação">
+                                            <span
+                                                className={`es-pill ${attendant.situacao === 'associado' ? 'green' : attendant.situacao === 'pendente' ? 'yellow' : 'slate'}`}
+                                            >
+                                                {attendant.situacao ===
+                                                'associado'
+                                                    ? 'Associado'
+                                                    : attendant.situacao ===
+                                                        'pendente'
+                                                      ? 'Pendente'
+                                                      : 'Ignorado'}
+                                            </span>
+                                        </td>
+                                        <td data-label="Vendedor">
+                                            {attendant.vendedor_nome ? (
+                                                <>
+                                                    <strong>
+                                                        {
+                                                            attendant.vendedor_nome
+                                                        }
+                                                    </strong>
+                                                    {attendant.vendedor_ativo ===
+                                                        false && (
+                                                        <div className="es-sub adm-warn-text">
+                                                            Vendedor inativo:
+                                                            não recebe leads até
+                                                            ser reativado ou
+                                                            trocado.
+                                                        </div>
+                                                    )}
+                                                </>
+                                            ) : (
+                                                <span className="es-sub">
+                                                    —
+                                                </span>
+                                            )}
+                                        </td>
+                                        <td>
+                                            <div className="adm-row-actions">
+                                                <button
+                                                    className={`adm-action${attendant.situacao === 'pendente' ? ' primary' : ''}`}
+                                                    disabled={
+                                                        readOnly ||
+                                                        busyId === attendant.id
+                                                    }
+                                                    onClick={() =>
+                                                        setAssociating(
+                                                            attendant,
+                                                        )
+                                                    }
+                                                    type="button"
+                                                >
+                                                    <i
+                                                        className="fas fa-link"
+                                                        aria-hidden="true"
+                                                    />
+                                                    {attendant.situacao ===
+                                                    'associado'
+                                                        ? 'Trocar'
+                                                        : 'Associar'}
+                                                </button>
+                                                {attendant.situacao ===
+                                                    'pendente' && (
+                                                    <button
+                                                        className="adm-action"
+                                                        disabled={
+                                                            readOnly ||
+                                                            busyId ===
+                                                                attendant.id
+                                                        }
+                                                        onClick={() =>
+                                                            send(
+                                                                attendant,
+                                                                'ignorar',
+                                                            )
+                                                        }
+                                                        title="Para quem não é vendedor, como coordenação ou recepção"
+                                                        type="button"
+                                                    >
+                                                        <i
+                                                            className="fas fa-eye-slash"
+                                                            aria-hidden="true"
+                                                        />
+                                                        Ignorar
+                                                    </button>
+                                                )}
+                                                {attendant.situacao !==
+                                                    'pendente' && (
+                                                    <button
+                                                        className="adm-action"
+                                                        disabled={
+                                                            readOnly ||
+                                                            busyId ===
+                                                                attendant.id
+                                                        }
+                                                        onClick={() =>
+                                                            attendant.situacao ===
+                                                            'associado'
+                                                                ? setUndoing(
+                                                                      attendant,
+                                                                  )
+                                                                : send(
+                                                                      attendant,
+                                                                      'desfazer',
+                                                                  )
+                                                        }
+                                                        type="button"
+                                                    >
+                                                        <i
+                                                            className="fas fa-rotate-left"
+                                                            aria-hidden="true"
+                                                        />
+                                                        {attendant.situacao ===
+                                                        'associado'
+                                                            ? 'Desassociar'
+                                                            : 'Voltar a pendente'}
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </section>
+
+            {associating && (
+                <AssociateModal
+                    attendant={associating}
+                    key={associating.id}
+                    onClose={() => setAssociating(null)}
+                    sellers={sellers}
+                    updateUrl={updateUrl(associating)}
+                />
+            )}
+
+            {undoing && (
+                <ConfirmDialog
+                    confirmLabel="Desassociar"
+                    onClose={() => setUndoing(null)}
+                    onConfirm={() => send(undoing, 'desfazer')}
+                    processing={busyId === undoing.id}
+                    title={`Desassociar ${undoing.nome}`}
+                    tone="danger"
+                >
+                    <p>
+                        {undoing.nome} volta a pendente e deixa de ligar leads a{' '}
+                        <strong>{undoing.vendedor_nome}</strong>. Os leads já
+                        vinculados continuam com esse vendedor.
+                    </p>
+                </ConfirmDialog>
+            )}
+        </VisitLayout>
     );
 }

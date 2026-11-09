@@ -7,6 +7,7 @@ type Props = {
     processing: boolean;
     submitLabel?: string;
     hideActions?: boolean;
+    submitDisabled?: boolean;
     className?: string;
     children: ReactNode;
 };
@@ -36,6 +37,7 @@ export default function RecordModal({
     processing,
     submitLabel = 'Salvar',
     hideActions = false,
+    submitDisabled = false,
     className,
     children,
 }: Props) {
@@ -78,7 +80,7 @@ export default function RecordModal({
                             </button>
                             <button
                                 className="btn btn-primary"
-                                disabled={processing}
+                                disabled={processing || submitDisabled}
                                 type="submit"
                             >
                                 {processing ? 'Salvando...' : submitLabel}

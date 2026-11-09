@@ -1,6 +1,10 @@
-import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
+import { Link, router, useForm, usePage } from '@inertiajs/react';
 import type { FormEvent } from 'react';
 import { useState } from 'react';
+import ConfirmDialog from '@/components/visitas/ConfirmDialog';
+import RecordModal from '@/components/visitas/RecordModal';
+import VisitLayout from '@/components/visitas/VisitLayout';
+import type { Auth } from '@/types/auth';
 
 type Unit = {
     id: number;
@@ -12,28 +16,57 @@ type Unit = {
     atendentes_pendentes: number;
 };
 type Props = { units: Unit[] };
-type SharedProps = {
-    flash?: { success?: string | null; warning?: string | null };
+
+const emptyForm = {
+    nome: '',
+    sellflux_token: '',
+    remover_sellflux_token: false,
 };
 
 export default function Units({ units }: Props) {
-    const { flash } = usePage<SharedProps>().props;
+    const { auth } = usePage<{ auth: Auth }>().props;
+    const [modalOpen, setModalOpen] = useState(false);
     const [editing, setEditing] = useState<Unit | null>(null);
+    const [showToken, setShowToken] = useState(false);
     const [testingId, setTestingId] = useState<number | null>(null);
-    const form = useForm({
-        nome: '',
-        sellflux_token: '',
-        remover_sellflux_token: false,
-    });
+    const [archiving, setArchiving] = useState<Unit | null>(null);
+    const form = useForm(emptyForm);
+    const pending = units.reduce(
+        (total, unit) => total + unit.atendentes_pendentes,
+        0,
+    );
 
-    function edit(unit: Unit) {
-        setEditing(unit);
-        form.setData({
-            nome: unit.nome,
-            sellflux_token: '',
-            remover_sellflux_token: false,
-        });
+    function openCreate() {
+        setEditing(null);
+        form.setData({ ...emptyForm });
         form.clearErrors();
+        setShowToken(false);
+        setModalOpen(true);
+    }
+
+    function openEdit(unit: Unit) {
+        setEditing(unit);
+        form.setData({ ...emptyForm, nome: unit.nome });
+        form.clearErrors();
+        setShowToken(false);
+        setModalOpen(true);
+    }
+
+    function closeModal() {
+        setModalOpen(false);
+        setEditing(null);
+        form.clearErrors();
+    }
+
+    function submit(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        const options = { preserveScroll: true, onSuccess: closeModal };
+
+        if (editing) {
+            form.put(`/admin/units/${editing.id}`, options);
+        } else {
+            form.post('/admin/units', options);
+        }
     }
 
     function testConnection(unit: Unit) {
@@ -48,182 +81,272 @@ export default function Units({ units }: Props) {
         );
     }
 
-    function resetForm() {
-        setEditing(null);
-        form.reset();
-        form.clearErrors();
-    }
-
-    function submit(event: FormEvent<HTMLFormElement>) {
-        event.preventDefault();
-
-        if (editing) {
-            form.put(`/admin/units/${editing.id}`, { onSuccess: resetForm });
-        } else {
-            form.post('/admin/units', { onSuccess: resetForm });
+    function toggleActive() {
+        if (!archiving) {
+            return;
         }
+
+        router.patch(
+            `/admin/units/${archiving.id}/active`,
+            { ativo: !archiving.ativo },
+            { preserveScroll: true, onFinish: () => setArchiving(null) },
+        );
     }
 
     return (
-        <>
-            <Head title="Unidades" />
-            <main className="min-h-screen bg-slate-100">
-                <header className="flex items-center justify-between bg-blue-900 px-6 py-4 text-white">
-                    <div>
-                        <h1 className="text-xl font-semibold">Unidades</h1>
-                        <a className="text-sm text-blue-100 underline" href="/">
-                            Voltar ao início
-                        </a>
+        <VisitLayout
+            active="admin-units"
+            auth={auth}
+            selectedUnitId={null}
+            title="Unidades"
+            units={[]}
+        >
+            <div className="es-header">
+                <div>
+                    <h1>Unidades</h1>
+                    <div className="es-sub">
+                        Escolas da rede e a conexão de cada uma com a SellFlux
                     </div>
+                </div>
+                <div className="es-header-actions">
                     <button
-                        className="rounded border border-white/50 px-3 py-2 text-sm"
-                        onClick={() => router.post('/logout')}
+                        className="btn btn-primary"
+                        onClick={openCreate}
                         type="button"
                     >
-                        Sair
+                        <i className="fas fa-plus" aria-hidden="true" /> Nova
+                        unidade
                     </button>
-                </header>
-                {flash?.success && (
-                    <p className="mx-auto mt-6 max-w-5xl rounded bg-emerald-100 px-4 py-3 text-sm text-emerald-900">
-                        {flash.success}
-                    </p>
-                )}
-                {flash?.warning && (
-                    <p className="mx-auto mt-6 max-w-5xl rounded bg-amber-100 px-4 py-3 text-sm text-amber-900">
-                        {flash.warning}
-                    </p>
-                )}
-                <section className="mx-auto grid max-w-5xl gap-6 px-6 py-8 md:grid-cols-[2fr_1fr]">
-                    <div className="rounded-lg bg-white p-5 shadow-sm">
-                        <h2 className="mb-4 text-lg font-semibold text-slate-900">
-                            Unidades cadastradas
-                        </h2>
-                        <table className="w-full text-left text-sm">
-                            <thead className="border-b text-slate-600">
-                                <tr>
-                                    <th className="py-3">Unidade</th>
-                                    <th className="py-3">Status</th>
-                                    <th className="py-3">SellFlux</th>
-                                    <th className="py-3">Ações</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {units.map((unit) => (
-                                    <tr className="border-b" key={unit.id}>
-                                        <td className="py-3">{unit.nome}</td>
-                                        <td className="py-3">
+                </div>
+            </div>
+
+            <div className="es-grid adm-stats">
+                <div className="es-stat">
+                    <small>Unidades ativas</small>
+                    <strong>{units.filter((unit) => unit.ativo).length}</strong>
+                </div>
+                <div className="es-stat">
+                    <small>Arquivadas</small>
+                    <strong>
+                        {units.filter((unit) => !unit.ativo).length}
+                    </strong>
+                </div>
+                <div className="es-stat">
+                    <small>Conectadas à SellFlux</small>
+                    <strong>
+                        {
+                            units.filter((unit) => unit.sellflux_configurado)
+                                .length
+                        }
+                    </strong>
+                </div>
+                <div className="es-stat">
+                    <small>Atendentes pendentes</small>
+                    <strong>{pending}</strong>
+                </div>
+            </div>
+
+            <section className="es-panel">
+                <div className="es-table-wrap">
+                    <table className="es-table adm-table">
+                        <thead>
+                            <tr>
+                                <th>Unidade</th>
+                                <th>Situação</th>
+                                <th>SellFlux</th>
+                                <th aria-label="Ações" />
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {units.map((unit) => (
+                                <tr
+                                    className={unit.ativo ? '' : 'adm-muted'}
+                                    key={unit.id}
+                                >
+                                    <td>
+                                        <div className="adm-person">
+                                            <span className="adm-avatar square">
+                                                <i
+                                                    className="fas fa-school"
+                                                    aria-hidden="true"
+                                                />
+                                            </span>
+                                            <strong>{unit.nome}</strong>
+                                        </div>
+                                    </td>
+                                    <td data-label="Situação">
+                                        <span
+                                            className={`es-pill ${unit.ativo ? 'green' : 'slate'}`}
+                                        >
                                             {unit.ativo ? 'Ativa' : 'Arquivada'}
-                                        </td>
-                                        <td className="py-3">
-                                            {unit.sellflux_configurado ? (
-                                                <>
-                                                    <span className="block">
-                                                        {unit.sellflux_projeto
-                                                            ? `Projeto ${unit.sellflux_projeto}`
-                                                            : 'Token configurado'}
-                                                    </span>
-                                                    {unit.sellflux_atualizado_em && (
-                                                        <span className="block text-xs text-slate-500">
-                                                            Alterado em{' '}
-                                                            {
-                                                                unit.sellflux_atualizado_em
-                                                            }
-                                                        </span>
-                                                    )}
-                                                </>
-                                            ) : (
-                                                <span className="text-slate-500">
-                                                    Não configurado
+                                        </span>
+                                    </td>
+                                    <td data-label="SellFlux">
+                                        {unit.sellflux_configurado ? (
+                                            <>
+                                                <span className="es-pill blue">
+                                                    <i
+                                                        className="fas fa-plug"
+                                                        aria-hidden="true"
+                                                    />{' '}
+                                                    {unit.sellflux_projeto
+                                                        ? `Projeto ${unit.sellflux_projeto}`
+                                                        : 'Token configurado'}
                                                 </span>
-                                            )}
-                                        </td>
-                                        <td className="py-3">
-                                            <div className="flex flex-wrap gap-x-3 gap-y-1">
+                                                {unit.sellflux_atualizado_em && (
+                                                    <div className="es-sub">
+                                                        Token alterado em{' '}
+                                                        {
+                                                            unit.sellflux_atualizado_em
+                                                        }
+                                                    </div>
+                                                )}
+                                            </>
+                                        ) : (
+                                            <span className="es-sub">
+                                                Não configurado
+                                            </span>
+                                        )}
+                                    </td>
+                                    <td>
+                                        <div className="adm-row-actions">
+                                            <button
+                                                className="adm-action"
+                                                onClick={() => openEdit(unit)}
+                                                type="button"
+                                            >
+                                                <i
+                                                    className="fas fa-pen"
+                                                    aria-hidden="true"
+                                                />
+                                                Editar
+                                            </button>
+                                            {unit.sellflux_configurado && (
                                                 <button
-                                                    className="text-blue-800 underline"
-                                                    onClick={() => edit(unit)}
-                                                    type="button"
-                                                >
-                                                    Editar
-                                                </button>
-                                                <button
-                                                    className="text-blue-800 underline"
+                                                    className="adm-action"
+                                                    disabled={
+                                                        testingId !== null
+                                                    }
                                                     onClick={() =>
-                                                        router.patch(
-                                                            `/admin/units/${unit.id}/active`,
-                                                            {
-                                                                ativo: !unit.ativo,
-                                                            },
-                                                        )
+                                                        testConnection(unit)
                                                     }
                                                     type="button"
                                                 >
-                                                    {unit.ativo
-                                                        ? 'Arquivar'
-                                                        : 'Reativar'}
+                                                    <i
+                                                        className={`fas ${testingId === unit.id ? 'fa-spinner fa-spin' : 'fa-satellite-dish'}`}
+                                                        aria-hidden="true"
+                                                    />
+                                                    {testingId === unit.id
+                                                        ? 'Testando...'
+                                                        : 'Testar conexão'}
                                                 </button>
-                                                {unit.sellflux_configurado && (
-                                                    <button
-                                                        className="text-blue-800 underline disabled:text-slate-400"
-                                                        disabled={
-                                                            testingId !== null
-                                                        }
-                                                        onClick={() =>
-                                                            testConnection(unit)
-                                                        }
-                                                        type="button"
-                                                    >
-                                                        {testingId === unit.id
-                                                            ? 'Testando...'
-                                                            : 'Testar conexão'}
-                                                    </button>
-                                                )}
-                                                {unit.sellflux_configurado && (
-                                                    <Link
-                                                        className="text-blue-800 underline"
-                                                        href={`/admin/units/${unit.id}/atendentes`}
-                                                    >
-                                                        Atendentes
-                                                        {unit.atendentes_pendentes >
-                                                            0 &&
-                                                            ` (${unit.atendentes_pendentes} ${unit.atendentes_pendentes === 1 ? 'pendente' : 'pendentes'})`}
-                                                    </Link>
-                                                )}
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                    <form
-                        className="space-y-4 rounded-lg bg-white p-5 shadow-sm"
-                        onSubmit={submit}
-                    >
-                        <h2 className="text-lg font-semibold text-slate-900">
-                            {editing ? 'Editar unidade' : 'Cadastrar unidade'}
-                        </h2>
-                        <label className="block text-sm font-medium text-slate-700">
-                            Nome
-                            <input
-                                className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
-                                onChange={(event) =>
-                                    form.setData('nome', event.target.value)
-                                }
-                                value={form.data.nome}
-                                required
-                            />
-                        </label>
+                                            )}
+                                            {unit.sellflux_configurado && (
+                                                <Link
+                                                    className="adm-action"
+                                                    href={`/admin/units/${unit.id}/atendentes`}
+                                                >
+                                                    <i
+                                                        className="fas fa-headset"
+                                                        aria-hidden="true"
+                                                    />
+                                                    Atendentes
+                                                    {unit.atendentes_pendentes >
+                                                        0 && (
+                                                        <span className="adm-badge">
+                                                            {
+                                                                unit.atendentes_pendentes
+                                                            }
+                                                        </span>
+                                                    )}
+                                                </Link>
+                                            )}
+                                            <button
+                                                className={`adm-action${unit.ativo ? ' danger' : ''}`}
+                                                onClick={() =>
+                                                    setArchiving(unit)
+                                                }
+                                                type="button"
+                                            >
+                                                <i
+                                                    className={`fas ${unit.ativo ? 'fa-box-archive' : 'fa-rotate-left'}`}
+                                                    aria-hidden="true"
+                                                />
+                                                {unit.ativo
+                                                    ? 'Arquivar'
+                                                    : 'Reativar'}
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                            {units.length === 0 && (
+                                <tr>
+                                    <td className="es-empty" colSpan={4}>
+                                        Nenhuma unidade cadastrada.
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            {modalOpen && (
+                <RecordModal
+                    className="adm-modal"
+                    onClose={closeModal}
+                    onSubmit={submit}
+                    processing={form.processing}
+                    submitLabel={editing ? 'Salvar alterações' : 'Cadastrar'}
+                    title={
+                        editing
+                            ? `Editar unidade: ${editing.nome}`
+                            : 'Nova unidade'
+                    }
+                >
+                    <label className="adm-span">
+                        Nome da unidade
+                        <input
+                            autoFocus
+                            onChange={(event) =>
+                                form.setData('nome', event.target.value)
+                            }
+                            required
+                            value={form.data.nome}
+                        />
                         {form.errors.nome && (
-                            <p className="text-sm text-red-700">
+                            <span className="field-error">
                                 {form.errors.nome}
-                            </p>
+                            </span>
                         )}
-                        <label className="block text-sm font-medium text-slate-700">
-                            Token da SellFlux
+                    </label>
+
+                    <p className="adm-section-title">
+                        Integração com a SellFlux
+                    </p>
+                    {editing?.sellflux_configurado && (
+                        <div
+                            className={`adm-span adm-callout${form.data.remover_sellflux_token ? ' warning' : ''}`}
+                        >
+                            <i
+                                className={`fas ${form.data.remover_sellflux_token ? 'fa-triangle-exclamation' : 'fa-circle-check'}`}
+                                aria-hidden="true"
+                            />
+                            <span>
+                                {form.data.remover_sellflux_token
+                                    ? 'O token será removido ao salvar. A unidade deixa de ser consultada na SellFlux.'
+                                    : `Token configurado${editing.sellflux_projeto ? ` (projeto ${editing.sellflux_projeto})` : ''}. Por segurança, ele nunca é exibido.`}
+                            </span>
+                        </div>
+                    )}
+                    <label className="adm-span">
+                        {editing?.sellflux_configurado
+                            ? 'Trocar token'
+                            : 'Token do projeto'}
+                        <span className="adm-input-group">
                             <input
                                 autoComplete="new-password"
-                                className="mt-1 w-full rounded border border-slate-300 px-3 py-2 disabled:bg-slate-100"
                                 disabled={form.data.remover_sellflux_token}
                                 onChange={(event) =>
                                     form.setData(
@@ -234,55 +357,83 @@ export default function Units({ units }: Props) {
                                 placeholder={
                                     editing?.sellflux_configurado
                                         ? 'Deixe em branco para manter o atual'
-                                        : 'Opcional'
+                                        : 'Opcional: cole o token do projeto'
                                 }
-                                type="password"
+                                type={showToken ? 'text' : 'password'}
                                 value={form.data.sellflux_token}
                             />
-                        </label>
-                        {form.errors.sellflux_token && (
-                            <p className="text-sm text-red-700">
-                                {form.errors.sellflux_token}
-                            </p>
-                        )}
-                        {editing?.sellflux_configurado && (
-                            <label className="flex items-center gap-2 text-sm text-slate-700">
-                                <input
-                                    checked={form.data.remover_sellflux_token}
-                                    onChange={(event) =>
-                                        form.setData({
-                                            ...form.data,
-                                            sellflux_token: '',
-                                            remover_sellflux_token:
-                                                event.target.checked,
-                                        })
-                                    }
-                                    type="checkbox"
-                                />
-                                Remover o token desta unidade
-                            </label>
-                        )}
-                        <div className="flex gap-2">
                             <button
-                                className="rounded bg-blue-800 px-4 py-2 text-white"
-                                disabled={form.processing}
-                                type="submit"
+                                aria-label={
+                                    showToken
+                                        ? 'Ocultar token'
+                                        : 'Mostrar token'
+                                }
+                                className="adm-input-btn"
+                                disabled={form.data.remover_sellflux_token}
+                                onClick={() => setShowToken((on) => !on)}
+                                type="button"
                             >
-                                {editing ? 'Salvar' : 'Cadastrar'}
+                                <i
+                                    className={`fas ${showToken ? 'fa-eye-slash' : 'fa-eye'}`}
+                                    aria-hidden="true"
+                                />
                             </button>
-                            {editing && (
-                                <button
-                                    className="rounded border border-slate-300 px-4 py-2"
-                                    onClick={resetForm}
-                                    type="button"
-                                >
-                                    Cancelar
-                                </button>
-                            )}
-                        </div>
-                    </form>
-                </section>
-            </main>
-        </>
+                        </span>
+                        <small className="adm-hint">
+                            O token é validado na SellFlux e guardado
+                            criptografado.
+                        </small>
+                        {form.errors.sellflux_token && (
+                            <span className="field-error">
+                                {form.errors.sellflux_token}
+                            </span>
+                        )}
+                    </label>
+                    {editing?.sellflux_configurado && (
+                        <label className="adm-span adm-switch">
+                            <input
+                                checked={form.data.remover_sellflux_token}
+                                onChange={(event) =>
+                                    form.setData({
+                                        ...form.data,
+                                        sellflux_token: '',
+                                        remover_sellflux_token:
+                                            event.target.checked,
+                                    })
+                                }
+                                type="checkbox"
+                            />
+                            <span>
+                                <strong>Remover o token desta unidade</strong>
+                                <small>
+                                    A tarefa de vínculo automático para de
+                                    consultar esta unidade.
+                                </small>
+                            </span>
+                        </label>
+                    )}
+                </RecordModal>
+            )}
+
+            {archiving && (
+                <ConfirmDialog
+                    confirmLabel={archiving.ativo ? 'Arquivar' : 'Reativar'}
+                    onClose={() => setArchiving(null)}
+                    onConfirm={toggleActive}
+                    title={
+                        archiving.ativo
+                            ? `Arquivar ${archiving.nome}`
+                            : `Reativar ${archiving.nome}`
+                    }
+                    tone={archiving.ativo ? 'danger' : 'primary'}
+                >
+                    <p>
+                        {archiving.ativo
+                            ? 'A unidade fica arquivada. Os dados continuam guardados, e você pode reativá-la depois.'
+                            : 'A unidade volta a ficar ativa no sistema.'}
+                    </p>
+                </ConfirmDialog>
+            )}
+        </VisitLayout>
     );
 }

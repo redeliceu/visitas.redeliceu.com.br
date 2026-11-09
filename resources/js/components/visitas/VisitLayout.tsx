@@ -16,7 +16,9 @@ type Props = {
         | 'relatorios'
         | 'vendedores'
         | 'painel-vendas'
-        | 'legacy-import';
+        | 'legacy-import'
+        | 'admin-users'
+        | 'admin-units';
     auth: Auth;
     units: Unit[];
     selectedUnitId: number | null;
@@ -160,7 +162,15 @@ export default function VisitLayout({
                                     </a>
                                 </li>
                                 <li>
-                                    <a className="nav-item" href="/admin/users">
+                                    <a
+                                        className={`nav-item${active === 'admin-users' ? ' active' : ''}`}
+                                        href="/admin/users"
+                                        aria-current={
+                                            active === 'admin-users'
+                                                ? 'page'
+                                                : undefined
+                                        }
+                                    >
                                         <i
                                             className="fas fa-users"
                                             aria-hidden="true"
@@ -169,7 +179,15 @@ export default function VisitLayout({
                                     </a>
                                 </li>
                                 <li>
-                                    <a className="nav-item" href="/admin/units">
+                                    <a
+                                        className={`nav-item${active === 'admin-units' ? ' active' : ''}`}
+                                        href="/admin/units"
+                                        aria-current={
+                                            active === 'admin-units'
+                                                ? 'page'
+                                                : undefined
+                                        }
+                                    >
                                         <i
                                             className="fas fa-school"
                                             aria-hidden="true"
