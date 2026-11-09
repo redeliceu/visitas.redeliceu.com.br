@@ -39,4 +39,10 @@ return [
         'token' => env('LEADS_API_TOKEN'),
     ],
 
+    // Tokens are per project and live encrypted on each unit (unidades.sellflux_token).
+    'sellflux' => [
+        'base_url' => env('SELLFLUX_BASE_URL', 'https://apis.sellflux.app'),
+        'timeout' => (int) env('SELLFLUX_TIMEOUT', 10),
+    ],
+
 ];

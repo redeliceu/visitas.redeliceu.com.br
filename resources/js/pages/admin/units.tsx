@@ -1,18 +1,51 @@
-import { Head, router, useForm } from '@inertiajs/react';
+import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
 import type { FormEvent } from 'react';
 import { useState } from 'react';
 
-type Unit = { id: number; nome: string; ativo: boolean };
+type Unit = {
+    id: number;
+    nome: string;
+    ativo: boolean;
+    sellflux_configurado: boolean;
+    sellflux_projeto: string | null;
+    sellflux_atualizado_em: string | null;
+    atendentes_pendentes: number;
+};
 type Props = { units: Unit[] };
+type SharedProps = {
+    flash?: { success?: string | null; warning?: string | null };
+};
 
 export default function Units({ units }: Props) {
+    const { flash } = usePage<SharedProps>().props;
     const [editing, setEditing] = useState<Unit | null>(null);
-    const form = useForm({ nome: '' });
+    const [testingId, setTestingId] = useState<number | null>(null);
+    const form = useForm({
+        nome: '',
+        sellflux_token: '',
+        remover_sellflux_token: false,
+    });
 
     function edit(unit: Unit) {
         setEditing(unit);
-        form.setData('nome', unit.nome);
+        form.setData({
+            nome: unit.nome,
+            sellflux_token: '',
+            remover_sellflux_token: false,
+        });
         form.clearErrors();
+    }
+
+    function testConnection(unit: Unit) {
+        router.post(
+            `/admin/units/${unit.id}/sellflux-test`,
+            {},
+            {
+                preserveScroll: true,
+                onStart: () => setTestingId(unit.id),
+                onFinish: () => setTestingId(null),
+            },
+        );
     }
 
     function resetForm() {
@@ -50,6 +83,16 @@ export default function Units({ units }: Props) {
                         Sair
                     </button>
                 </header>
+                {flash?.success && (
+                    <p className="mx-auto mt-6 max-w-5xl rounded bg-emerald-100 px-4 py-3 text-sm text-emerald-900">
+                        {flash.success}
+                    </p>
+                )}
+                {flash?.warning && (
+                    <p className="mx-auto mt-6 max-w-5xl rounded bg-amber-100 px-4 py-3 text-sm text-amber-900">
+                        {flash.warning}
+                    </p>
+                )}
                 <section className="mx-auto grid max-w-5xl gap-6 px-6 py-8 md:grid-cols-[2fr_1fr]">
                     <div className="rounded-lg bg-white p-5 shadow-sm">
                         <h2 className="mb-4 text-lg font-semibold text-slate-900">
@@ -60,6 +103,7 @@ export default function Units({ units }: Props) {
                                 <tr>
                                     <th className="py-3">Unidade</th>
                                     <th className="py-3">Status</th>
+                                    <th className="py-3">SellFlux</th>
                                     <th className="py-3">Ações</th>
                                 </tr>
                             </thead>
@@ -71,7 +115,30 @@ export default function Units({ units }: Props) {
                                             {unit.ativo ? 'Ativa' : 'Arquivada'}
                                         </td>
                                         <td className="py-3">
-                                            <div className="flex gap-3">
+                                            {unit.sellflux_configurado ? (
+                                                <>
+                                                    <span className="block">
+                                                        {unit.sellflux_projeto
+                                                            ? `Projeto ${unit.sellflux_projeto}`
+                                                            : 'Token configurado'}
+                                                    </span>
+                                                    {unit.sellflux_atualizado_em && (
+                                                        <span className="block text-xs text-slate-500">
+                                                            Alterado em{' '}
+                                                            {
+                                                                unit.sellflux_atualizado_em
+                                                            }
+                                                        </span>
+                                                    )}
+                                                </>
+                                            ) : (
+                                                <span className="text-slate-500">
+                                                    Não configurado
+                                                </span>
+                                            )}
+                                        </td>
+                                        <td className="py-3">
+                                            <div className="flex flex-wrap gap-x-3 gap-y-1">
                                                 <button
                                                     className="text-blue-800 underline"
                                                     onClick={() => edit(unit)}
@@ -95,6 +162,33 @@ export default function Units({ units }: Props) {
                                                         ? 'Arquivar'
                                                         : 'Reativar'}
                                                 </button>
+                                                {unit.sellflux_configurado && (
+                                                    <button
+                                                        className="text-blue-800 underline disabled:text-slate-400"
+                                                        disabled={
+                                                            testingId !== null
+                                                        }
+                                                        onClick={() =>
+                                                            testConnection(unit)
+                                                        }
+                                                        type="button"
+                                                    >
+                                                        {testingId === unit.id
+                                                            ? 'Testando...'
+                                                            : 'Testar conexão'}
+                                                    </button>
+                                                )}
+                                                {unit.sellflux_configurado && (
+                                                    <Link
+                                                        className="text-blue-800 underline"
+                                                        href={`/admin/units/${unit.id}/atendentes`}
+                                                    >
+                                                        Atendentes
+                                                        {unit.atendentes_pendentes >
+                                                            0 &&
+                                                            ` (${unit.atendentes_pendentes} ${unit.atendentes_pendentes === 1 ? 'pendente' : 'pendentes'})`}
+                                                    </Link>
+                                                )}
                                             </div>
                                         </td>
                                     </tr>
@@ -124,6 +218,49 @@ export default function Units({ units }: Props) {
                             <p className="text-sm text-red-700">
                                 {form.errors.nome}
                             </p>
+                        )}
+                        <label className="block text-sm font-medium text-slate-700">
+                            Token da SellFlux
+                            <input
+                                autoComplete="new-password"
+                                className="mt-1 w-full rounded border border-slate-300 px-3 py-2 disabled:bg-slate-100"
+                                disabled={form.data.remover_sellflux_token}
+                                onChange={(event) =>
+                                    form.setData(
+                                        'sellflux_token',
+                                        event.target.value,
+                                    )
+                                }
+                                placeholder={
+                                    editing?.sellflux_configurado
+                                        ? 'Deixe em branco para manter o atual'
+                                        : 'Opcional'
+                                }
+                                type="password"
+                                value={form.data.sellflux_token}
+                            />
+                        </label>
+                        {form.errors.sellflux_token && (
+                            <p className="text-sm text-red-700">
+                                {form.errors.sellflux_token}
+                            </p>
+                        )}
+                        {editing?.sellflux_configurado && (
+                            <label className="flex items-center gap-2 text-sm text-slate-700">
+                                <input
+                                    checked={form.data.remover_sellflux_token}
+                                    onChange={(event) =>
+                                        form.setData({
+                                            ...form.data,
+                                            sellflux_token: '',
+                                            remover_sellflux_token:
+                                                event.target.checked,
+                                        })
+                                    }
+                                    type="checkbox"
+                                />
+                                Remover o token desta unidade
+                            </label>
                         )}
                         <div className="flex gap-2">
                             <button

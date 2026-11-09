@@ -17,7 +17,7 @@ class UnitAccess
     public function availableUnits(User $user): Collection
     {
         if ($user->isMaster()) {
-            return Unidade::query()->where('ativo', true)->orderBy('nome')->get();
+            return Unidade::query()->where('ativo', true)->orderBy('nome')->get(['id', 'nome']);
         }
 
         return $user->unidades()

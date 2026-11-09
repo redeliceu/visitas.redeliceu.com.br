@@ -11,6 +11,7 @@ use App\Support\UnitAccess;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response as HttpResponse;
+use Illuminate\Support\Arr;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -26,7 +27,8 @@ class RelatorioController extends Controller
         [$user, $filters, $report] = $this->data($request, $reportService);
 
         return Inertia::render('relatorios/index', [
-            'report' => $report,
+            // Raw models stay on the server; the page gets the mapped lists below.
+            'report' => Arr::except($report, ['units', 'sellers']),
             'units' => $this->unitAccess->availableUnits($user)->map(fn ($unit) => [
                 'id' => $unit->id,
                 'nome' => $unit->nome,

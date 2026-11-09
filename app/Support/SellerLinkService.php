@@ -5,6 +5,7 @@ namespace App\Support;
 use App\Models\Agendamento;
 use App\Models\Lead;
 use App\Models\MetaVendedor;
+use App\Models\SellfluxAtendente;
 use App\Models\User;
 use App\Models\Vendedor;
 use App\Models\Visita;
@@ -63,6 +64,9 @@ class SellerLinkService
                     ->where('vendedor_id', $current->id)
                     ->whereNotIn('campanha_id', $targetCampaignIds)
                     ->update(['vendedor_id' => $target->id]);
+
+                // The attendant is the same person, so the association follows the merge.
+                SellfluxAtendente::query()->where('vendedor_id', $current->id)->update(['vendedor_id' => $target->id]);
 
                 // Frees the (user_id, unidade_id) unique key for the linked record.
                 $current->forceFill(['user_id' => null, 'ativo' => false])->save();
