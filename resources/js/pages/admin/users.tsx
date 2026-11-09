@@ -1,6 +1,10 @@
-import { Head, router, useForm, usePage } from '@inertiajs/react';
+import { router, useForm, usePage } from '@inertiajs/react';
 import type { FormEvent } from 'react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import ConfirmDialog from '@/components/visitas/ConfirmDialog';
+import RecordModal from '@/components/visitas/RecordModal';
+import VisitLayout from '@/components/visitas/VisitLayout';
+import type { Auth } from '@/types/auth';
 
 type Unit = { id: number; nome: string };
 type Role = { value: string; label: string };
@@ -28,61 +32,71 @@ type Props = {
     unlinkedSellers: UnlinkedSeller[];
 };
 
+const roleHelp: Record<string, string> = {
+    master: 'Acesso total, inclusive usuários, unidades e integrações.',
+    gestor: 'Vê e gerencia tudo das unidades atribuídas.',
+    atendimento:
+        'Trabalha só os próprios leads e a fila das unidades atribuídas.',
+};
+
+const emptyForm = {
+    name: '',
+    email: '',
+    password: '',
+    role: 'atendimento',
+    ativo: true,
+    unit_ids: [] as number[],
+};
+
 export default function Users({ users, units, roles, unlinkedSellers }: Props) {
-    const page = usePage<{ flash?: { success?: string | null } }>();
+    const { auth } = usePage<{ auth: Auth }>().props;
+    const [modalOpen, setModalOpen] = useState(false);
     const [editing, setEditing] = useState<Account | null>(null);
+    const [showPassword, setShowPassword] = useState(false);
+    const [linking, setLinking] = useState<Account | null>(null);
+    const [confirmLink, setConfirmLink] = useState(false);
+    const [toggling, setToggling] = useState<Account | null>(null);
+    const [search, setSearch] = useState('');
+    const [roleFilter, setRoleFilter] = useState('');
+    const [statusFilter, setStatusFilter] = useState('');
+    const form = useForm(emptyForm);
     const linkForm = useForm({ vendedor_id: '' });
 
-    function linkSeller(event: FormEvent<HTMLFormElement>) {
-        event.preventDefault();
+    const roleLabel = (value: string) =>
+        roles.find((role) => role.value === value)?.label ?? value;
 
-        if (!editing) {
-            return;
-        }
+    const visibleUsers = useMemo(() => {
+        const term = search.trim().toLowerCase();
 
-        const seller = unlinkedSellers.find(
-            (candidate) => String(candidate.id) === linkForm.data.vendedor_id,
+        return users.filter(
+            (user) =>
+                (term === '' ||
+                    user.name.toLowerCase().includes(term) ||
+                    user.email.toLowerCase().includes(term)) &&
+                (roleFilter === '' || user.role === roleFilter) &&
+                (statusFilter === '' ||
+                    (statusFilter === 'ativo') === user.ativo),
         );
-        const confirmed = window.confirm(
-            `Vincular "${seller?.nome ?? ''}" à conta de ${editing.name}? ` +
-                'Se a conta já tiver um vendedor nesta unidade, os leads, ' +
-                'agendamentos, visitas e metas dele serão mesclados no ' +
-                'vendedor escolhido, e o cadastro antigo será desativado.',
-        );
+    }, [users, search, roleFilter, statusFilter]);
 
-        if (!confirmed) {
-            return;
-        }
+    const linkableSellers = linking
+        ? unlinkedSellers.filter((seller) =>
+              linking.unidades.some((unit) => unit.id === seller.unidade_id),
+          )
+        : [];
+    const chosenSeller = unlinkedSellers.find(
+        (seller) => String(seller.id) === linkForm.data.vendedor_id,
+    );
 
-        linkForm.post(`/admin/users/${editing.id}/sellers`, {
-            preserveScroll: true,
-            onSuccess: resetForm,
-        });
-    }
-    const form = useForm({
-        name: '',
-        email: '',
-        password: '',
-        role: 'atendimento',
-        ativo: true,
-        unit_ids: [] as number[],
-    });
-
-    function resetForm() {
+    function openCreate() {
         setEditing(null);
-        form.reset();
+        form.setData({ ...emptyForm });
         form.clearErrors();
-        form.setData({
-            name: '',
-            email: '',
-            password: '',
-            role: 'atendimento',
-            ativo: true,
-            unit_ids: [],
-        });
+        setShowPassword(false);
+        setModalOpen(true);
     }
 
-    function edit(user: Account) {
+    function openEdit(user: Account) {
         setEditing(user);
         form.clearErrors();
         form.setData({
@@ -93,11 +107,19 @@ export default function Users({ users, units, roles, unlinkedSellers }: Props) {
             ativo: user.ativo,
             unit_ids: user.unidades.map((unit) => unit.id),
         });
+        setShowPassword(false);
+        setModalOpen(true);
+    }
+
+    function closeModal() {
+        setModalOpen(false);
+        setEditing(null);
+        form.clearErrors();
     }
 
     function submit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        const options = { onSuccess: resetForm };
+        const options = { preserveScroll: true, onSuccess: closeModal };
 
         if (editing) {
             form.put(`/admin/users/${editing.id}`, options);
@@ -106,362 +128,618 @@ export default function Users({ users, units, roles, unlinkedSellers }: Props) {
         }
     }
 
-    function toggleUnit(unitId: number, checked: boolean) {
-        const unitIds = checked
-            ? [...form.data.unit_ids, unitId]
-            : form.data.unit_ids.filter((id) => id !== unitId);
+    function setRole(role: string) {
         form.setData((current) => ({
             ...current,
-            unit_ids: unitIds,
+            role,
+            unit_ids: role === 'master' ? [] : current.unit_ids,
         }));
     }
 
+    function toggleUnit(unitId: number) {
+        form.setData((current) => ({
+            ...current,
+            unit_ids: current.unit_ids.includes(unitId)
+                ? current.unit_ids.filter((id) => id !== unitId)
+                : [...current.unit_ids, unitId],
+        }));
+    }
+
+    function openLink(user: Account) {
+        setLinking(user);
+        linkForm.setData('vendedor_id', '');
+        linkForm.clearErrors();
+    }
+
+    function submitLink() {
+        if (!linking) {
+            return;
+        }
+
+        linkForm.post(`/admin/users/${linking.id}/sellers`, {
+            preserveScroll: true,
+            onSuccess: () => {
+                setConfirmLink(false);
+                setLinking(null);
+            },
+            onError: () => setConfirmLink(false),
+        });
+    }
+
+    function toggleActive() {
+        if (!toggling) {
+            return;
+        }
+
+        router.patch(
+            `/admin/users/${toggling.id}/active`,
+            { ativo: !toggling.ativo },
+            { preserveScroll: true, onFinish: () => setToggling(null) },
+        );
+    }
+
     return (
-        <>
-            <Head title="Usuários" />
-            <main className="min-h-screen bg-slate-100">
-                <header className="flex items-center justify-between bg-blue-900 px-6 py-4 text-white">
-                    <div>
-                        <h1 className="text-xl font-semibold">Usuários</h1>
-                        <a className="text-sm text-blue-100 underline" href="/">
-                            Voltar ao início
-                        </a>
+        <VisitLayout
+            active="admin-users"
+            auth={auth}
+            selectedUnitId={null}
+            title="Usuários"
+            units={[]}
+        >
+            <div className="es-header">
+                <div>
+                    <h1>Usuários</h1>
+                    <div className="es-sub">
+                        Contas de acesso, perfis e unidades de cada pessoa
                     </div>
+                </div>
+                <div className="es-header-actions">
                     <button
-                        className="rounded border border-white/50 px-3 py-2 text-sm"
-                        onClick={() => router.post('/logout')}
+                        className="btn btn-primary"
+                        onClick={openCreate}
                         type="button"
                     >
-                        Sair
+                        <i className="fas fa-user-plus" aria-hidden="true" />{' '}
+                        Novo usuário
                     </button>
-                </header>
-                {page.props.flash?.success && (
-                    <div className="mx-auto mt-6 max-w-6xl px-6">
-                        <p
-                            className="rounded border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-800"
-                            role="status"
-                        >
-                            {page.props.flash.success}
-                        </p>
-                    </div>
-                )}
-                <div className="mx-auto grid max-w-6xl gap-6 px-6 py-8 lg:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
-                    <section className="overflow-x-auto rounded-lg bg-white p-5 shadow-sm">
-                        <h2 className="mb-4 text-lg font-semibold text-slate-900">
-                            Contas cadastradas
-                        </h2>
-                        <table className="w-full min-w-[620px] text-left text-sm">
-                            <thead className="border-b text-slate-600">
-                                <tr>
-                                    <th className="px-2 py-3">Nome</th>
-                                    <th className="px-2 py-3">Perfil</th>
-                                    <th className="px-2 py-3">Unidades</th>
-                                    <th className="px-2 py-3">Status</th>
-                                    <th className="px-2 py-3">Ações</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {users.map((user) => (
-                                    <tr className="border-b" key={user.id}>
-                                        <td className="px-2 py-3">
-                                            <strong>{user.name}</strong>
-                                            <div className="text-slate-500">
-                                                {user.email}
-                                            </div>
-                                            {user.role === 'atendimento' && (
-                                                <div className="text-slate-500">
-                                                    Vendedores vinculados:{' '}
-                                                    {user.vendedores.length}
+                </div>
+            </div>
+
+            <div className="es-grid adm-stats">
+                <div className="es-stat">
+                    <small>Contas ativas</small>
+                    <strong>{users.filter((user) => user.ativo).length}</strong>
+                </div>
+                <div className="es-stat">
+                    <small>Gestores</small>
+                    <strong>
+                        {users.filter((user) => user.role === 'gestor').length}
+                    </strong>
+                </div>
+                <div className="es-stat">
+                    <small>Atendimento / Vendedor</small>
+                    <strong>
+                        {
+                            users.filter((user) => user.role === 'atendimento')
+                                .length
+                        }
+                    </strong>
+                </div>
+                <div className="es-stat">
+                    <small>Vendedores sem conta</small>
+                    <strong>{unlinkedSellers.length}</strong>
+                </div>
+            </div>
+
+            <section className="es-panel">
+                <div className="adm-toolbar">
+                    <label className="adm-search">
+                        <i className="fas fa-search" aria-hidden="true" />
+                        <input
+                            aria-label="Buscar por nome ou e-mail"
+                            onChange={(event) => setSearch(event.target.value)}
+                            placeholder="Buscar por nome ou e-mail"
+                            type="search"
+                            value={search}
+                        />
+                    </label>
+                    <select
+                        aria-label="Filtrar por perfil"
+                        onChange={(event) => setRoleFilter(event.target.value)}
+                        value={roleFilter}
+                    >
+                        <option value="">Todos os perfis</option>
+                        {roles.map((role) => (
+                            <option key={role.value} value={role.value}>
+                                {role.label}
+                            </option>
+                        ))}
+                    </select>
+                    <select
+                        aria-label="Filtrar por situação"
+                        onChange={(event) =>
+                            setStatusFilter(event.target.value)
+                        }
+                        value={statusFilter}
+                    >
+                        <option value="">Ativos e inativos</option>
+                        <option value="ativo">Só ativos</option>
+                        <option value="inativo">Só inativos</option>
+                    </select>
+                </div>
+
+                <div className="es-table-wrap">
+                    <table className="es-table adm-table">
+                        <thead>
+                            <tr>
+                                <th>Pessoa</th>
+                                <th>Perfil</th>
+                                <th>Unidades</th>
+                                <th>Situação</th>
+                                <th aria-label="Ações" />
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {visibleUsers.map((user) => (
+                                <tr
+                                    className={user.ativo ? '' : 'adm-muted'}
+                                    key={user.id}
+                                >
+                                    <td>
+                                        <div className="adm-person">
+                                            <span className="adm-avatar">
+                                                {user.name
+                                                    .charAt(0)
+                                                    .toUpperCase()}
+                                            </span>
+                                            <div>
+                                                <strong>{user.name}</strong>
+                                                <div className="es-sub">
+                                                    {user.email}
                                                 </div>
-                                            )}
-                                        </td>
-                                        <td className="px-2 py-3">
-                                            {roles.find(
-                                                (role) =>
-                                                    role.value === user.role,
-                                            )?.label ?? user.role}
-                                        </td>
-                                        <td className="px-2 py-3">
-                                            {user.role === 'master'
-                                                ? 'Todas'
-                                                : user.unidades
-                                                      .map((unit) => unit.nome)
-                                                      .join(', ')}
-                                        </td>
-                                        <td className="px-2 py-3">
-                                            {user.ativo ? 'Ativo' : 'Inativo'}
-                                        </td>
-                                        <td className="px-2 py-3">
-                                            <div className="flex gap-2">
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td data-label="Perfil">
+                                        <span
+                                            className={`es-pill ${user.role === 'master' ? 'purple' : user.role === 'gestor' ? 'blue' : 'slate'}`}
+                                        >
+                                            {roleLabel(user.role)}
+                                        </span>
+                                        {user.role === 'atendimento' && (
+                                            <div className="es-sub">
+                                                {user.vendedores.length === 1
+                                                    ? '1 vendedor vinculado'
+                                                    : `${user.vendedores.length} vendedores vinculados`}
+                                            </div>
+                                        )}
+                                    </td>
+                                    <td data-label="Unidades">
+                                        {user.role === 'master' ? (
+                                            <span className="es-sub">
+                                                Todas
+                                            </span>
+                                        ) : user.unidades.length === 0 ? (
+                                            <span className="adm-warn-text">
+                                                Nenhuma unidade
+                                            </span>
+                                        ) : (
+                                            <div className="adm-chips">
+                                                {user.unidades.map((unit) => (
+                                                    <span
+                                                        className="adm-chip"
+                                                        key={unit.id}
+                                                    >
+                                                        {unit.nome}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </td>
+                                    <td data-label="Situação">
+                                        <span
+                                            className={`es-pill ${user.ativo ? 'green' : 'red'}`}
+                                        >
+                                            {user.ativo ? 'Ativa' : 'Inativa'}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <div className="adm-row-actions">
+                                            <button
+                                                className="adm-action"
+                                                onClick={() => openEdit(user)}
+                                                type="button"
+                                            >
+                                                <i
+                                                    className="fas fa-pen"
+                                                    aria-hidden="true"
+                                                />
+                                                Editar
+                                            </button>
+                                            {user.role === 'atendimento' && (
                                                 <button
-                                                    className="text-blue-800 underline"
-                                                    onClick={() => edit(user)}
-                                                    type="button"
-                                                >
-                                                    Editar
-                                                </button>
-                                                <button
-                                                    className="text-blue-800 underline"
+                                                    className="adm-action"
                                                     onClick={() =>
-                                                        router.patch(
-                                                            `/admin/users/${user.id}/active`,
-                                                            {
-                                                                ativo: !user.ativo,
-                                                            },
-                                                        )
+                                                        openLink(user)
                                                     }
                                                     type="button"
                                                 >
+                                                    <i
+                                                        className="fas fa-link"
+                                                        aria-hidden="true"
+                                                    />
+                                                    Vendedores
+                                                </button>
+                                            )}
+                                            {user.id !== auth.user?.id && (
+                                                <button
+                                                    className={`adm-action${user.ativo ? ' danger' : ''}`}
+                                                    onClick={() =>
+                                                        setToggling(user)
+                                                    }
+                                                    type="button"
+                                                >
+                                                    <i
+                                                        className={`fas ${user.ativo ? 'fa-user-slash' : 'fa-user-check'}`}
+                                                        aria-hidden="true"
+                                                    />
                                                     {user.ativo
                                                         ? 'Desativar'
                                                         : 'Ativar'}
                                                 </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </section>
-                    <form
-                        className="space-y-4 rounded-lg bg-white p-5 shadow-sm"
-                        onSubmit={submit}
-                    >
-                        <h2 className="text-lg font-semibold text-slate-900">
-                            {editing ? 'Editar usuário' : 'Criar usuário'}
-                        </h2>
-                        <label className="block text-sm font-medium text-slate-700">
-                            Nome
-                            <input
-                                className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
-                                onChange={(event) =>
-                                    form.setData('name', event.target.value)
-                                }
-                                value={form.data.name}
-                                required
-                            />
-                            {form.errors.name && (
-                                <span className="mt-1 block text-sm text-red-700">
-                                    {form.errors.name}
-                                </span>
+                                            )}
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                            {visibleUsers.length === 0 && (
+                                <tr>
+                                    <td className="es-empty" colSpan={5}>
+                                        Nenhuma conta encontrada com esses
+                                        filtros.
+                                    </td>
+                                </tr>
                             )}
-                        </label>
-                        <label className="block text-sm font-medium text-slate-700">
-                            E-mail
-                            <input
-                                className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
-                                onChange={(event) =>
-                                    form.setData('email', event.target.value)
-                                }
-                                type="email"
-                                value={form.data.email}
-                                required
-                            />
-                            {form.errors.email && (
-                                <span className="mt-1 block text-sm text-red-700">
-                                    {form.errors.email}
-                                </span>
-                            )}
-                        </label>
-                        <label className="block text-sm font-medium text-slate-700">
-                            {editing
-                                ? 'Nova senha (opcional)'
-                                : 'Senha (mínimo 12 caracteres)'}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            {modalOpen && (
+                <RecordModal
+                    className="adm-modal"
+                    onClose={closeModal}
+                    onSubmit={submit}
+                    processing={form.processing}
+                    submitLabel={editing ? 'Salvar alterações' : 'Criar conta'}
+                    title={
+                        editing
+                            ? `Editar usuário: ${editing.name}`
+                            : 'Novo usuário'
+                    }
+                >
+                    <p className="adm-section-title">Dados de acesso</p>
+                    <label>
+                        Nome
+                        <input
+                            autoFocus
+                            onChange={(event) =>
+                                form.setData('name', event.target.value)
+                            }
+                            required
+                            value={form.data.name}
+                        />
+                        {form.errors.name && (
+                            <span className="field-error">
+                                {form.errors.name}
+                            </span>
+                        )}
+                    </label>
+                    <label>
+                        E-mail
+                        <input
+                            onChange={(event) =>
+                                form.setData('email', event.target.value)
+                            }
+                            required
+                            type="email"
+                            value={form.data.email}
+                        />
+                        {form.errors.email && (
+                            <span className="field-error">
+                                {form.errors.email}
+                            </span>
+                        )}
+                    </label>
+                    <label className="adm-span">
+                        {editing ? 'Nova senha' : 'Senha'}
+                        <span className="adm-input-group">
                             <input
                                 autoComplete="new-password"
-                                className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
+                                minLength={12}
                                 onChange={(event) =>
                                     form.setData('password', event.target.value)
                                 }
-                                type="password"
-                                value={form.data.password}
-                                required={!editing}
-                            />
-                            {form.errors.password && (
-                                <span className="mt-1 block text-sm text-red-700">
-                                    {form.errors.password}
-                                </span>
-                            )}
-                        </label>
-                        <label className="block text-sm font-medium text-slate-700">
-                            Perfil
-                            <select
-                                className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
-                                onChange={(event) => {
-                                    const role = event.target.value;
-                                    form.setData('role', role);
-                                    if (role === 'master') {
-                                        form.setData('unit_ids', []);
-                                    }
-                                }}
-                                value={form.data.role}
-                            >
-                                {roles.map((role) => (
-                                    <option key={role.value} value={role.value}>
-                                        {role.label}
-                                    </option>
-                                ))}
-                            </select>
-                            {form.errors.role && (
-                                <span className="mt-1 block text-sm text-red-700">
-                                    {form.errors.role}
-                                </span>
-                            )}
-                        </label>
-                        {form.data.role !== 'master' && (
-                            <fieldset>
-                                <legend className="mb-2 text-sm font-medium text-slate-700">
-                                    Unidades atribuídas
-                                </legend>
-                                <div className="space-y-2">
-                                    {units.map((unit) => (
-                                        <label
-                                            className="flex items-center gap-2 text-sm text-slate-700"
-                                            key={unit.id}
-                                        >
-                                            <input
-                                                checked={form.data.unit_ids.includes(
-                                                    unit.id,
-                                                )}
-                                                onChange={(event) =>
-                                                    toggleUnit(
-                                                        unit.id,
-                                                        event.target.checked,
-                                                    )
-                                                }
-                                                type="checkbox"
-                                            />
-                                            {unit.nome}
-                                        </label>
-                                    ))}
-                                </div>
-                                {form.errors.unit_ids && (
-                                    <p className="mt-1 text-sm text-red-700">
-                                        {form.errors.unit_ids}
-                                    </p>
-                                )}
-                            </fieldset>
-                        )}
-                        <label className="flex items-center gap-2 text-sm text-slate-700">
-                            <input
-                                checked={form.data.ativo}
-                                onChange={(event) =>
-                                    form.setData('ativo', event.target.checked)
+                                placeholder={
+                                    editing
+                                        ? 'Deixe em branco para manter a atual'
+                                        : 'Mínimo de 12 caracteres'
                                 }
-                                type="checkbox"
+                                required={!editing}
+                                type={showPassword ? 'text' : 'password'}
+                                value={form.data.password}
                             />
-                            Conta ativa
-                        </label>
-                        {editing && editing.role === 'atendimento' && (
-                            <fieldset className="space-y-2 rounded border border-slate-200 p-3">
-                                <legend className="px-1 text-sm font-medium text-slate-700">
-                                    Vendedores desta conta
-                                </legend>
-                                <ul className="text-sm text-slate-600">
-                                    {editing.vendedores.map((seller) => (
-                                        <li key={seller.id}>
-                                            {seller.nome} •{' '}
-                                            {units.find(
-                                                (unit) =>
-                                                    unit.id ===
-                                                    seller.unidade_id,
-                                            )?.nome ?? 'Unidade inativa'}
-                                        </li>
-                                    ))}
-                                    {editing.vendedores.length === 0 && (
-                                        <li>Nenhum vendedor vinculado.</li>
-                                    )}
-                                </ul>
-                            </fieldset>
-                        )}
-                        <div className="flex gap-2">
                             <button
-                                className="rounded bg-blue-800 px-4 py-2 text-white disabled:opacity-60"
-                                disabled={form.processing}
-                                type="submit"
+                                aria-label={
+                                    showPassword
+                                        ? 'Ocultar senha'
+                                        : 'Mostrar senha'
+                                }
+                                className="adm-input-btn"
+                                onClick={() => setShowPassword((on) => !on)}
+                                type="button"
                             >
-                                {editing ? 'Salvar alterações' : 'Criar conta'}
+                                <i
+                                    className={`fas ${showPassword ? 'fa-eye-slash' : 'fa-eye'}`}
+                                    aria-hidden="true"
+                                />
                             </button>
-                            {editing && (
+                        </span>
+                        {form.errors.password && (
+                            <span className="field-error">
+                                {form.errors.password}
+                            </span>
+                        )}
+                    </label>
+
+                    <p className="adm-section-title">Perfil</p>
+                    <div
+                        aria-label="Perfil"
+                        className="adm-span adm-options"
+                        role="radiogroup"
+                    >
+                        {roles.map((role) => (
+                            <label
+                                className={`adm-option${form.data.role === role.value ? ' selected' : ''}`}
+                                key={role.value}
+                            >
+                                <input
+                                    checked={form.data.role === role.value}
+                                    name="role"
+                                    onChange={() => setRole(role.value)}
+                                    type="radio"
+                                    value={role.value}
+                                />
+                                <span>
+                                    <strong>{role.label}</strong>
+                                    <small>{roleHelp[role.value]}</small>
+                                </span>
+                            </label>
+                        ))}
+                        {form.errors.role && (
+                            <span className="field-error">
+                                {form.errors.role}
+                            </span>
+                        )}
+                    </div>
+
+                    {form.data.role !== 'master' && (
+                        <>
+                            <p className="adm-section-title">
+                                Unidades atribuídas
                                 <button
-                                    className="rounded border border-slate-300 px-4 py-2"
-                                    onClick={resetForm}
+                                    className="adm-link"
+                                    onClick={() =>
+                                        form.setData(
+                                            'unit_ids',
+                                            form.data.unit_ids.length ===
+                                                units.length
+                                                ? []
+                                                : units.map((unit) => unit.id),
+                                        )
+                                    }
                                     type="button"
                                 >
-                                    Cancelar
+                                    {form.data.unit_ids.length === units.length
+                                        ? 'Limpar'
+                                        : 'Selecionar todas'}
                                 </button>
-                            )}
-                        </div>
-                    </form>
-                    {editing && editing.role === 'atendimento' && (
-                        <form
-                            className="space-y-3 rounded-lg bg-white p-5 shadow-sm lg:col-start-2"
-                            onSubmit={linkSeller}
-                        >
-                            <h2 className="text-lg font-semibold text-slate-900">
-                                Vincular vendedor existente
-                            </h2>
-                            <p className="text-sm text-slate-600">
-                                Use para ligar {editing.name} a um vendedor já
-                                cadastrado sem conta, por exemplo um vendedor da
-                                importação histórica. Os leads desse vendedor
-                                passam a aparecer para a conta.
                             </p>
-                            <label className="block text-sm font-medium text-slate-700">
-                                Vendedor sem conta
-                                <select
-                                    className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
-                                    onChange={(event) =>
-                                        linkForm.setData(
-                                            'vendedor_id',
-                                            event.target.value,
-                                        )
-                                    }
-                                    required
-                                    value={linkForm.data.vendedor_id}
-                                >
-                                    <option value="">Selecione</option>
-                                    {unlinkedSellers
-                                        .filter((seller) =>
-                                            editing.unidades.some(
-                                                (unit) =>
-                                                    unit.id ===
-                                                    seller.unidade_id,
-                                            ),
-                                        )
-                                        .map((seller) => (
-                                            <option
-                                                key={seller.id}
-                                                value={seller.id}
-                                            >
-                                                {seller.nome} • {seller.unidade}{' '}
-                                                • {seller.leads_count} leads
-                                                {seller.ativo
-                                                    ? ''
-                                                    : ' (inativo)'}
-                                            </option>
-                                        ))}
-                                </select>
-                                {linkForm.errors.vendedor_id && (
-                                    <span className="mt-1 block text-sm text-red-700">
-                                        {linkForm.errors.vendedor_id}
+                            <div className="adm-span adm-chips">
+                                {units.map((unit) => {
+                                    const on = form.data.unit_ids.includes(
+                                        unit.id,
+                                    );
+
+                                    return (
+                                        <button
+                                            aria-pressed={on}
+                                            className={`adm-chip toggle${on ? ' on' : ''}`}
+                                            key={unit.id}
+                                            onClick={() => toggleUnit(unit.id)}
+                                            type="button"
+                                        >
+                                            {on && (
+                                                <i
+                                                    className="fas fa-check"
+                                                    aria-hidden="true"
+                                                />
+                                            )}
+                                            {unit.nome}
+                                        </button>
+                                    );
+                                })}
+                                {form.errors.unit_ids && (
+                                    <span className="field-error">
+                                        {form.errors.unit_ids}
                                     </span>
                                 )}
-                            </label>
-                            <button
-                                className="rounded bg-blue-800 px-4 py-2 text-white disabled:opacity-60"
-                                disabled={
-                                    linkForm.processing ||
-                                    linkForm.data.vendedor_id === ''
-                                }
-                                type="submit"
-                            >
-                                Vincular e mesclar
-                            </button>
-                        </form>
+                            </div>
+                        </>
                     )}
-                </div>
-            </main>
-        </>
+
+                    <label className="adm-span adm-switch">
+                        <input
+                            checked={form.data.ativo}
+                            onChange={(event) =>
+                                form.setData('ativo', event.target.checked)
+                            }
+                            type="checkbox"
+                        />
+                        <span>
+                            <strong>Conta ativa</strong>
+                            <small>
+                                Contas inativas não conseguem entrar no sistema.
+                            </small>
+                        </span>
+                    </label>
+                </RecordModal>
+            )}
+
+            {linking && !confirmLink && (
+                <RecordModal
+                    className="adm-modal"
+                    onClose={() => setLinking(null)}
+                    onSubmit={(event) => {
+                        event.preventDefault();
+                        setConfirmLink(true);
+                    }}
+                    processing={linkForm.processing}
+                    submitDisabled={linkForm.data.vendedor_id === ''}
+                    submitLabel="Continuar"
+                    title={`Vendedores de ${linking.name}`}
+                >
+                    <p className="adm-section-title">Vinculados a esta conta</p>
+                    <div className="adm-span adm-chips">
+                        {linking.vendedores.length === 0 ? (
+                            <span className="es-sub">
+                                Nenhum vendedor vinculado.
+                            </span>
+                        ) : (
+                            linking.vendedores.map((seller) => (
+                                <span className="adm-chip" key={seller.id}>
+                                    {seller.nome} ·{' '}
+                                    {units.find(
+                                        (unit) => unit.id === seller.unidade_id,
+                                    )?.nome ?? 'Unidade inativa'}
+                                </span>
+                            ))
+                        )}
+                    </div>
+                    <p className="adm-section-title">
+                        Vincular vendedor existente
+                    </p>
+                    <p className="adm-span es-sub">
+                        Use para ligar a conta a um vendedor cadastrado sem
+                        conta, por exemplo da importação histórica. Os leads
+                        dele passam a aparecer para esta conta.
+                    </p>
+                    {linkableSellers.length === 0 ? (
+                        <p className="adm-span es-empty">
+                            Não há vendedores sem conta nas unidades desta
+                            pessoa.
+                        </p>
+                    ) : (
+                        <div
+                            aria-label="Vendedor sem conta"
+                            className="adm-span adm-options"
+                            role="radiogroup"
+                        >
+                            {linkableSellers.map((seller) => (
+                                <label
+                                    className={`adm-option${linkForm.data.vendedor_id === String(seller.id) ? ' selected' : ''}`}
+                                    key={seller.id}
+                                >
+                                    <input
+                                        checked={
+                                            linkForm.data.vendedor_id ===
+                                            String(seller.id)
+                                        }
+                                        name="vendedor_id"
+                                        onChange={() =>
+                                            linkForm.setData(
+                                                'vendedor_id',
+                                                String(seller.id),
+                                            )
+                                        }
+                                        required
+                                        type="radio"
+                                    />
+                                    <span>
+                                        <strong>
+                                            {seller.nome}
+                                            {!seller.ativo && (
+                                                <span className="es-pill red">
+                                                    inativo
+                                                </span>
+                                            )}
+                                        </strong>
+                                        <small>
+                                            {seller.unidade} ·{' '}
+                                            {seller.leads_count === 1
+                                                ? '1 lead'
+                                                : `${seller.leads_count} leads`}
+                                        </small>
+                                    </span>
+                                </label>
+                            ))}
+                        </div>
+                    )}
+                    {linkForm.errors.vendedor_id && (
+                        <span className="field-error adm-span">
+                            {linkForm.errors.vendedor_id}
+                        </span>
+                    )}
+                </RecordModal>
+            )}
+
+            {linking && confirmLink && chosenSeller && (
+                <ConfirmDialog
+                    confirmLabel="Vincular e mesclar"
+                    onClose={() => setConfirmLink(false)}
+                    onConfirm={submitLink}
+                    processing={linkForm.processing}
+                    title="Confirmar vínculo"
+                >
+                    <p>
+                        Vincular <strong>{chosenSeller.nome}</strong> (
+                        {chosenSeller.unidade}) à conta de{' '}
+                        <strong>{linking.name}</strong>?
+                    </p>
+                    <ul>
+                        <li>
+                            {chosenSeller.leads_count === 0
+                                ? 'Ele ainda não tem leads; os próximos aparecem para esta conta.'
+                                : chosenSeller.leads_count === 1
+                                  ? 'O lead dele passa a aparecer para esta conta.'
+                                  : `Os ${chosenSeller.leads_count} leads dele passam a aparecer para esta conta.`}
+                        </li>
+                        <li>
+                            Se a conta já tiver um vendedor nesta unidade, os
+                            leads, agendamentos, visitas e metas dele são
+                            mesclados no vendedor escolhido, e o cadastro antigo
+                            é desativado.
+                        </li>
+                        <li>Nada é apagado.</li>
+                    </ul>
+                </ConfirmDialog>
+            )}
+
+            {toggling && (
+                <ConfirmDialog
+                    confirmLabel={toggling.ativo ? 'Desativar' : 'Ativar'}
+                    onClose={() => setToggling(null)}
+                    onConfirm={toggleActive}
+                    title={toggling.ativo ? 'Desativar conta' : 'Ativar conta'}
+                    tone={toggling.ativo ? 'danger' : 'primary'}
+                >
+                    <p>
+                        {toggling.ativo
+                            ? `${toggling.name} não vai mais conseguir entrar no sistema. Os leads e registros dela continuam guardados, e você pode reativar a conta depois.`
+                            : `${toggling.name} volta a ter acesso com o perfil e as unidades atuais.`}
+                    </p>
+                </ConfirmDialog>
+            )}
+        </VisitLayout>
     );
 }

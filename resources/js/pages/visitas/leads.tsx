@@ -1120,7 +1120,7 @@ export default function Leads({
                                                             'Fila da unidade'}
                                                         {' • por '}
                                                         {transfer.user ??
-                                                            'Usuário removido'}
+                                                            'Sistema ou usuário removido'}
                                                         {transfer.reason && (
                                                             <div className="es-sub">
                                                                 Motivo:{' '}
@@ -1154,7 +1154,7 @@ export default function Leads({
                                                         </strong>
                                                         {' · '}
                                                         {history.user?.name ||
-                                                            'Usuário removido'}
+                                                            'Sistema ou usuário removido'}
                                                         <ul>
                                                             {history.changes.map(
                                                                 (

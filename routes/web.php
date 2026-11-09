@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AccountController;
 use App\Http\Controllers\Admin\LegacyLeadImportController;
+use App\Http\Controllers\Admin\SellfluxAtendenteController;
 use App\Http\Controllers\Admin\UnidadeController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\AgendamentoController;
@@ -82,5 +83,13 @@ Route::middleware(['auth', 'active'])->group(function () {
         Route::post('/units', [UnidadeController::class, 'store'])->name('units.store');
         Route::put('/units/{unidade}', [UnidadeController::class, 'update'])->name('units.update');
         Route::patch('/units/{unidade}/active', [UnidadeController::class, 'setActive'])->name('units.active');
+        Route::post('/units/{unidade}/sellflux-test', [UnidadeController::class, 'testSellflux'])
+            ->middleware('throttle:10,1')
+            ->name('units.sellflux-test');
+        Route::get('/units/{unidade}/atendentes', [SellfluxAtendenteController::class, 'index'])->name('units.atendentes.index');
+        Route::post('/units/{unidade}/atendentes/sync', [SellfluxAtendenteController::class, 'sync'])
+            ->middleware('throttle:6,1')
+            ->name('units.atendentes.sync');
+        Route::put('/units/{unidade}/atendentes/{atendente}', [SellfluxAtendenteController::class, 'update'])->name('units.atendentes.update');
     });
 });
