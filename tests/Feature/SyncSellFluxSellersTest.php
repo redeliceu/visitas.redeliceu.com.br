@@ -31,6 +31,12 @@ class SyncSellFluxSellersTest extends TestCase
     /** @var array<string, list<array<string, mixed>>> chats by SellFlux lead id */
     private array $chats = [];
 
+    /** @var array<string, list<array<string, mixed>>> attendances by SellFlux lead id */
+    private array $attendances = [];
+
+    /** @var array<string, list<array<string, mixed>>> team messages by attendance id */
+    private array $messages = [];
+
     /** @var array<string, int> HTTP status forced per token */
     private array $failingTokens = [];
 
@@ -53,6 +59,14 @@ class SyncSellFluxSellersTest extends TestCase
 
             parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
             $path = (string) parse_url($request->url(), PHP_URL_PATH);
+
+            if (preg_match('#^/api/v1/contact/leads/([^/]+)/links$#', $path, $match) === 1) {
+                return Http::response(['links' => ['attendance' => $this->attendances[$match[1]] ?? []]]);
+            }
+
+            if (preg_match('#^/api/v1/contact/attendances/([^/]+)/messages$#', $path, $match) === 1) {
+                return Http::response(['data' => $this->messages[$match[1]] ?? []]);
+            }
 
             return match ($path) {
                 '/api/v1/contact/leads' => Http::response(['data' => $this->sellfluxLeads[$query['search'] ?? ''] ?? []]),
@@ -109,6 +123,113 @@ class SyncSellFluxSellersTest extends TestCase
             'user_attending' => ['id' => $userId, 'name' => $name],
             'created_at' => $createdAt,
         ];
+    }
+
+    /**
+     * A finished attendance and the team members who wrote in it, oldest first.
+     *
+     * @param  list<string>  $writers
+     */
+    private function finishedAttendance(string $sellfluxLeadId, int $attendanceId, string $updatedAt, array $writers): void
+    {
+        $this->attendances[$sellfluxLeadId][] = [
+            'id' => $attendanceId,
+            'chat_id' => "chat-{$attendanceId}",
+            'status' => 3,
+            'attendant_kind' => 'finished',
+            'updated_at' => $updatedAt,
+        ];
+
+        foreach ($writers as $minute => $userId) {
+            $this->messages[(string) $attendanceId][] = [
+                'from' => 'team',
+                'user_id' => $userId,
+                'created_at' => sprintf('%s 10:%02d:00', substr($updatedAt, 0, 10), $minute),
+            ];
+        }
+    }
+
+    private function ignore(string $sellfluxUserId): void
+    {
+        SellfluxAtendente::query()->create([
+            'unidade_id' => $this->unit->id,
+            'sellflux_user_id' => $sellfluxUserId,
+            'nome' => 'Financeiro',
+            'situacao' => SellfluxAtendente::IGNORADO,
+            'visto_em' => now(),
+        ]);
+    }
+
+    public function test_finished_attendance_links_the_last_team_member_who_wrote(): void
+    {
+        $lead = $this->lead();
+        $this->onSellFlux('11999990001', 'sf-1');
+        // Current attendance is back in the queue, with no attendant.
+        $this->finishedAttendance('sf-1', 101, '2026-10-01 12:00:00', ['u-outro']);
+        $this->finishedAttendance('sf-1', 102, '2026-11-01 12:00:00', ['u-outro', 'u-ana']);
+
+        $this->artisan('sellflux:sync-sellers')->assertSuccessful();
+
+        $this->assertSame($this->seller->id, $lead->fresh()->vendedor_id);
+        $history = LeadHistory::query()->where('lead_id', $lead->id)->sole();
+        $this->assertContains(SellFluxSellerSync::REASON_PREVIOUS, array_column($history->changes, 'new'));
+    }
+
+    public function test_ignored_attendant_is_skipped_for_the_seller_before_them(): void
+    {
+        $this->ignore('u-financeiro');
+        $lead = $this->lead();
+        $this->onSellFlux('11999990001', 'sf-1');
+        $this->chat('sf-1', 'u-financeiro', 'Financeiro', '2026-11-05T10:00:00Z');
+        $this->finishedAttendance('sf-1', 201, '2026-11-05 12:00:00', ['u-ana', 'u-financeiro']);
+
+        $this->artisan('sellflux:sync-sellers')->assertSuccessful();
+
+        $this->assertSame($this->seller->id, $lead->fresh()->vendedor_id);
+    }
+
+    public function test_pending_attendant_stops_the_search_in_previous_attendances(): void
+    {
+        SellfluxAtendente::query()->create([
+            'unidade_id' => $this->unit->id,
+            'sellflux_user_id' => 'u-pendente',
+            'nome' => 'Vendedor Novo',
+            'visto_em' => now(),
+        ]);
+        $lead = $this->lead();
+        $this->onSellFlux('11999990001', 'sf-1');
+        $this->finishedAttendance('sf-1', 301, '2026-11-01 12:00:00', ['u-ana', 'u-pendente']);
+
+        $this->artisan('sellflux:sync-sellers')->assertSuccessful();
+
+        $this->assertNull($lead->fresh()->vendedor_id);
+    }
+
+    public function test_previous_attendances_are_read_only_when_the_current_way_fails(): void
+    {
+        $this->lead();
+        $this->onSellFlux('11999990001', 'sf-1');
+        $this->chat('sf-1', 'u-ana', 'Ana Souza', '2026-11-01T10:00:00Z');
+
+        $this->artisan('sellflux:sync-sellers')->assertSuccessful();
+
+        Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), '/links')
+            || str_contains($request->url(), '/attendances/'));
+    }
+
+    public function test_only_the_three_most_recent_attendances_are_read(): void
+    {
+        $lead = $this->lead();
+        $this->onSellFlux('11999990001', 'sf-1');
+        $this->finishedAttendance('sf-1', 401, '2026-01-01 12:00:00', ['u-ana']);
+        $this->finishedAttendance('sf-1', 402, '2026-09-01 12:00:00', ['u-outro']);
+        $this->finishedAttendance('sf-1', 403, '2026-10-01 12:00:00', ['u-outro']);
+        $this->finishedAttendance('sf-1', 404, '2026-11-01 12:00:00', ['u-outro']);
+
+        $this->artisan('sellflux:sync-sellers')->assertSuccessful();
+
+        $this->assertNull($lead->fresh()->vendedor_id);
+        Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), '/attendances/401/'));
     }
 
     public function test_links_the_seller_of_the_most_recent_chat_without_an_author(): void
