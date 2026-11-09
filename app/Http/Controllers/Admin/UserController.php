@@ -144,6 +144,10 @@ class UserController extends Controller
             'password' => [$user ? 'nullable' : 'required', 'string', 'min:12'],
         ]);
 
+        // The password is applied separately by store/update, only when it
+        // was filled; a blank field arrives as null and must never be saved.
+        unset($data['password']);
+
         $unitIds = $data['unit_ids'] ?? [];
         if ($data['role'] === User::ROLE_MASTER && $unitIds !== []) {
             throw ValidationException::withMessages([
