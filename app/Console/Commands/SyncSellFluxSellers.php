@@ -64,6 +64,7 @@ class SyncSellFluxSellers extends Command
                 $situation,
                 $counts['consultados'] ?? 0,
                 $counts['vinculados'] ?? 0,
+                $counts['vinculados_por_historico'] ?? 0,
                 $counts['nao_encontrados'] ?? 0,
                 ($counts['sem_atendente'] ?? 0) + ($counts['atendente_sem_vendedor'] ?? 0),
                 ($counts['ambiguos'] ?? 0) + ($counts['sem_telefone'] ?? 0) + ($counts['ja_vinculados'] ?? 0),
@@ -79,7 +80,7 @@ class SyncSellFluxSellers extends Command
         }
 
         $this->table(
-            ['Unidade', 'Situação', 'Consultados', $dryRun ? 'Seriam vinculados' : 'Vinculados', 'Não encontrados', 'Sem vendedor associado', 'Outros', 'Falhas'],
+            ['Unidade', 'Situação', 'Consultados', $dryRun ? 'Seriam vinculados' : 'Vinculados', 'Por atendimento anterior', 'Não encontrados', 'Sem vendedor associado', 'Outros', 'Falhas'],
             $rows,
         );
 

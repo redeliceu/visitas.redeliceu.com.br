@@ -26,7 +26,14 @@ class SellFluxSellerSync
     /** Leads in these situations are never looked up (D-039). */
     public const EXCLUDED_STATUSES = ['Matriculado', 'Aluno', 'Rematrícula', 'Perdido', 'Sem Interesse'];
 
+    public const REASON_PREVIOUS = 'Vínculo automático pela SellFlux (atendimento anterior)';
+
     private const CHATS_PER_LEAD = 30;
+
+    /** Finished attendances read when the current one gives no seller (D-041). */
+    private const PREVIOUS_ATTENDANCES = 3;
+
+    private const MESSAGES_PER_ATTENDANCE = 30;
 
     public function __construct(
         private readonly SellFluxAttendants $attendants,
@@ -43,15 +50,23 @@ class SellFluxSellerSync
         $counts = array_fill_keys([
             'consultados', 'vinculados', 'sem_telefone', 'nao_encontrados', 'ambiguos',
             'sem_atendente', 'atendente_sem_vendedor', 'ja_vinculados', 'falhas', 'atendentes_novos',
+            'vinculados_por_historico',
         ], 0);
 
         $sellers = $this->associatedSellers($unit);
+        $pending = SellfluxAtendente::query()
+            ->where('unidade_id', $unit->id)
+            ->where('situacao', SellfluxAtendente::PENDENTE)
+            ->pluck('sellflux_user_id')
+            ->map(fn (mixed $id): string => (string) $id)
+            ->flip()
+            ->all();
 
         foreach ($this->nextLeads($unit, $limit, $dryRun) as $lead) {
             $counts['consultados']++;
 
             try {
-                $outcome = $this->syncLead($unit, $client, $lead, $sellers, $dryRun, $counts);
+                $outcome = $this->syncLead($unit, $client, $lead, $sellers, $pending, $dryRun, $counts);
             } catch (SellFluxRequestFailed $exception) {
                 if ($exception->isAuthenticationFailure()) {
                     throw $exception;
@@ -121,12 +136,13 @@ class SellFluxSellerSync
 
     /**
      * @param  array<string, int>  $sellers
+     * @param  array<string, int>  $pending  pending attendants, keyed by SellFlux id
      * @param  array<string, int>  $counts
      * @return string the counter to increase
      *
      * @throws SellFluxRequestFailed
      */
-    private function syncLead(Unidade $unit, SellFluxClient $client, Lead $lead, array $sellers, bool $dryRun, array &$counts): string
+    private function syncLead(Unidade $unit, SellFluxClient $client, Lead $lead, array $sellers, array $pending, bool $dryRun, array &$counts): string
     {
         $phones = array_filter(
             [$lead->telefone, $lead->telefone_secundario],
@@ -158,25 +174,103 @@ class SellFluxSellerSync
 
         $attendant = $this->lastAttendant($client, $sellfluxLeadIds[0]);
 
-        if ($attendant === null) {
-            return 'sem_atendente';
+        if ($attendant !== null) {
+            $isNew = ! $dryRun && $this->attendants->remember($unit, $attendant['id'], $attendant['name']);
+            $counts['atendentes_novos'] += $isNew ? 1 : 0;
+            $sellerId = $sellers[$attendant['id']] ?? null;
+
+            if ($sellerId !== null) {
+                return $this->link($lead, $unit, $sellerId, self::REASON, 'vinculados', $dryRun);
+            }
+
+            // Someone still waiting for a master's decision is answering the
+            // lead now; going back to an older seller would skip that decision.
+            if ($isNew || isset($pending[$attendant['id']]) || ! $this->isKnown($unit, $attendant['id'])) {
+                return 'atendente_sem_vendedor';
+            }
         }
 
-        if (! $dryRun && $this->attendants->remember($unit, $attendant['id'], $attendant['name'])) {
-            $counts['atendentes_novos']++;
+        // D-041: the current attendance gave no seller, so look at who last
+        // answered the lead in its previous attendances.
+        $sellerId = $this->previousSeller($client, $sellfluxLeadIds[0], $sellers, $pending);
+
+        if ($sellerId !== null) {
+            return $this->link($lead, $unit, $sellerId, self::REASON_PREVIOUS, 'vinculados_por_historico', $dryRun);
         }
 
-        $sellerId = $sellers[$attendant['id']] ?? null;
+        return $attendant === null ? 'sem_atendente' : 'atendente_sem_vendedor';
+    }
 
-        if ($sellerId === null) {
-            return 'atendente_sem_vendedor';
-        }
-
+    private function link(Lead $lead, Unidade $unit, int $sellerId, string $reason, string $outcome, bool $dryRun): string
+    {
         if ($dryRun) {
-            return 'vinculados';
+            return $outcome;
         }
 
-        return $this->assign($lead->id, $unit->id, $sellerId) ? 'vinculados' : 'ja_vinculados';
+        return $this->assign($lead->id, $unit->id, $sellerId, $reason) ? $outcome : 'ja_vinculados';
+    }
+
+    private function isKnown(Unidade $unit, string $sellfluxUserId): bool
+    {
+        return SellfluxAtendente::query()
+            ->where('unidade_id', $unit->id)
+            ->where('sellflux_user_id', $sellfluxUserId)
+            ->exists();
+    }
+
+    /**
+     * The seller of the most recent team member who wrote to the lead in its
+     * last attendances. Ignored attendants (not sellers) and ids outside the
+     * list are skipped; a pending one stops the search, since it may be a
+     * seller still to be associated.
+     *
+     * @param  array<string, int>  $sellers
+     * @param  array<string, int>  $pending
+     *
+     * @throws SellFluxRequestFailed
+     */
+    private function previousSeller(SellFluxClient $client, string $sellfluxLeadId, array $sellers, array $pending): ?int
+    {
+        $attendances = data_get($client->get("/api/v1/contact/leads/{$sellfluxLeadId}/links", [
+            'kinds' => 'attendance',
+            'limit' => 20,
+        ]), 'links.attendance');
+
+        if (! is_array($attendances)) {
+            return null;
+        }
+
+        $recent = collect($attendances)
+            ->filter(fn (mixed $item): bool => is_int(data_get($item, 'id')) || is_string(data_get($item, 'id')))
+            ->sortByDesc(fn (mixed $item): int => $this->date(data_get($item, 'updated_at'))?->getTimestamp() ?? 0)
+            ->take(self::PREVIOUS_ATTENDANCES);
+
+        foreach ($recent as $attendance) {
+            $messages = collect($this->items($client->get(
+                '/api/v1/contact/attendances/'.data_get($attendance, 'id').'/messages',
+                ['from' => 'team', 'limit' => self::MESSAGES_PER_ATTENDANCE],
+            )))->sortByDesc(fn (mixed $message): int => $this->date(data_get($message, 'created_at'))?->getTimestamp() ?? 0);
+
+            foreach ($messages as $message) {
+                $userId = data_get($message, 'user_id');
+
+                if ((! is_int($userId) && ! is_string($userId)) || $userId === '') {
+                    continue;
+                }
+
+                $userId = (string) $userId;
+
+                if (isset($sellers[$userId])) {
+                    return $sellers[$userId];
+                }
+
+                if (isset($pending[$userId])) {
+                    return null;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -254,16 +348,16 @@ class SellFluxSellerSync
      * Locks the lead and only links it if it still has no seller, so a seller
      * who took it meanwhile is never replaced (D-040).
      */
-    private function assign(int $leadId, int $unitId, int $sellerId): bool
+    private function assign(int $leadId, int $unitId, int $sellerId, string $reason): bool
     {
-        return DB::transaction(function () use ($leadId, $unitId, $sellerId): bool {
+        return DB::transaction(function () use ($leadId, $unitId, $sellerId, $reason): bool {
             $lead = Lead::query()->lockForUpdate()->whereKey($leadId)->first();
 
             if ($lead === null || $lead->vendedor_id !== null || (int) $lead->unidade_id !== $unitId) {
                 return false;
             }
 
-            return $this->assignment->assign($lead, $sellerId, null, self::REASON);
+            return $this->assignment->assign($lead, $sellerId, null, $reason);
         });
     }
 
